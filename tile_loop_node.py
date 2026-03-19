@@ -7,7 +7,6 @@ Requires ComfyUI with comfy_execution and loop infrastructure.
 import torch
 
 from .tile_config import parse_tile_config
-from .loop_nodes import NUM_FLOW_SOCKETS
 
 try:
     from comfy_execution.graph_utils import GraphBuilder
@@ -47,7 +46,7 @@ class TileLoopOpen:
             _, _, _, _, tile_specs = parse_tile_config(tile_config)
             count = len(tile_specs)
             graph = GraphBuilder()
-            loop_open = graph.node("WhileLoopOpen", condition=count, initial_value0=count, initial_value1=None)
+            loop_open = graph.node("ForLoopOpen", remaining=count, initial_value1=None)
             remaining = loop_open.out(1)
             sub = graph.node("IntMathOperation", a=count, b=remaining, operation="subtract")
             get_tile = graph.node("GetTile", images=images, tile_config=tile_config, tile_index=sub.out(0))
@@ -92,12 +91,8 @@ class TileLoopClose:
         try:
             graph = GraphBuilder()
             acc_node = graph.node("AccumulateTile", to_add=tile, accumulation=accumulation)
-            while_open = flow_control[0]
-            sub = graph.node("IntMathOperation", operation="subtract", a=[while_open, 1], b=1)
-            cond = graph.node("IntConditions", a=[while_open, 1], b=0, operation=">")
-            input_vals = {f"initial_value{i}": (acc_node.out(0) if i == 1 else None) for i in range(1, NUM_FLOW_SOCKETS)}
-            while_close = graph.node("WhileLoopClose", flow_control=flow_control, condition=cond.out(0), initial_value0=sub.out(0), **input_vals)
-            tiles_list = while_close.out(1)
+            loop_close = graph.node("ForLoopClose", flow_control=flow_control, initial_value1=acc_node.out(0))
+            tiles_list = loop_close.out(0)
             return {
                 "result": (tiles_list,),
                 "expand": graph.finalize(),

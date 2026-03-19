@@ -6,11 +6,13 @@ from .loop_nodes import (
     AccumulateTile,
     IntMathOperation,
     IntConditions,
+    ForLoopOpen,
+    ForLoopClose,
     WhileLoopOpen,
     WhileLoopClose,
 )
 
-# Tile Loop requires 5 internal nodes (minimum: WhileLoop + AccumulateTile + IntMath + IntConditions)
+# Tile Loop requires ForLoop (which uses WhileLoop) + AccumulateTile + IntMath + IntConditions
 NODE_CLASS_MAPPINGS = {
     "VideoTileSlice": VideoTileSlice,
     "VideoTileMerge": VideoTileMerge,
@@ -21,8 +23,10 @@ NODE_CLASS_MAPPINGS = {
     "IntMathOperation": IntMathOperation,
     "IntConditions": IntConditions,
 }
-if WhileLoopOpen is not None:
+if ForLoopOpen is not None:
     NODE_CLASS_MAPPINGS.update({
+        "ForLoopOpen": ForLoopOpen,
+        "ForLoopClose": ForLoopClose,
         "WhileLoopOpen": WhileLoopOpen,
         "WhileLoopClose": WhileLoopClose,
     })
