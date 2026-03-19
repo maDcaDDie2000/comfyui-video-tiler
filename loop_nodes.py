@@ -39,7 +39,7 @@ class IntMathOperation:
     RETURN_TYPES = ("INT",)
     RETURN_NAMES = ("a",)
     FUNCTION = "op"
-    CATEGORY = "video/tile_loop"
+    CATEGORY = "Video Tiler"
 
     def op(self, a, b, operation):
         if operation == "add":
@@ -68,7 +68,7 @@ class IntConditions:
 
     RETURN_TYPES = ("BOOLEAN",)
     FUNCTION = "cond"
-    CATEGORY = "video/tile_loop"
+    CATEGORY = "Video Tiler"
 
     def cond(self, a, b, operation):
         if operation == "==":
@@ -97,7 +97,7 @@ class AccumulateNode:
     RETURN_TYPES = ("ACCUMULATION",)
     RETURN_NAMES = ("accumulation",)
     FUNCTION = "accumulate"
-    CATEGORY = "video/tile_loop"
+    CATEGORY = "Video Tiler"
 
     def accumulate(self, to_add, accumulation=None):
         if accumulation is None:
@@ -118,7 +118,7 @@ class AccumulationToListNode:
     RETURN_NAMES = ("list",)
     OUTPUT_IS_LIST = (True,)
     FUNCTION = "to_list"
-    CATEGORY = "video/tile_loop"
+    CATEGORY = "Video Tiler"
 
     def to_list(self, accumulation):
         return (accumulation["accum"],)
@@ -139,7 +139,7 @@ if _HAS_EXECUTION:
         RETURN_TYPES = tuple(["FLOW_CONTROL"] + ["*"] * NUM_FLOW_SOCKETS)
         RETURN_NAMES = tuple(["FLOW_CONTROL"] + [f"value{i}" for i in range(NUM_FLOW_SOCKETS)])
         FUNCTION = "open"
-        CATEGORY = "video/tile_loop"
+        CATEGORY = "Video Tiler"
 
         def open(self, condition, **kwargs):
             values = [kwargs.get(f"initial_value{i}", None) for i in range(NUM_FLOW_SOCKETS)]
@@ -163,7 +163,7 @@ if _HAS_EXECUTION:
         RETURN_TYPES = tuple(["*"] * NUM_FLOW_SOCKETS)
         RETURN_NAMES = tuple([f"value{i}" for i in range(NUM_FLOW_SOCKETS)])
         FUNCTION = "close"
-        CATEGORY = "video/tile_loop"
+        CATEGORY = "Video Tiler"
 
         def _explore_dependencies(self, node_id, dynprompt, upstream):
             node_info = dynprompt.get_node(node_id)
@@ -234,7 +234,7 @@ if _HAS_EXECUTION:
         RETURN_TYPES = tuple(["FLOW_CONTROL", "INT"] + ["*"] * (NUM_FLOW_SOCKETS - 1))
         RETURN_NAMES = tuple(["flow_control", "remaining"] + [f"value{i}" for i in range(1, NUM_FLOW_SOCKETS)])
         FUNCTION = "open"
-        CATEGORY = "video/tile_loop"
+        CATEGORY = "Video Tiler"
 
         def open(self, remaining, **kwargs):
             graph = GraphBuilder()
@@ -260,7 +260,7 @@ if _HAS_EXECUTION:
         RETURN_TYPES = tuple(["*"] * (NUM_FLOW_SOCKETS - 1))
         RETURN_NAMES = tuple([f"value{i}" for i in range(1, NUM_FLOW_SOCKETS)])
         FUNCTION = "close"
-        CATEGORY = "video/tile_loop"
+        CATEGORY = "Video Tiler"
 
         def close(self, flow_control, **kwargs):
             graph = GraphBuilder()

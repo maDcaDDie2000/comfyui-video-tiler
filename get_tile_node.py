@@ -40,7 +40,7 @@ class GetTile:
     RETURN_TYPES = ("IMAGE", "INT", "TILE_CONFIG")
     RETURN_NAMES = ("tile", "tile_index", "tile_config")
     FUNCTION = "get_tile"
-    CATEGORY = "video"
+    CATEGORY = "Video Tiler"
 
     def get_tile(self, images: torch.Tensor, tile_config: tuple, tile_index: int):
         _, _, _, _, tile_specs = parse_tile_config(tile_config)
@@ -67,7 +67,7 @@ class GetTileCount:
     RETURN_TYPES = ("INT", "TILE_CONFIG")
     RETURN_NAMES = ("count", "tile_config")
     FUNCTION = "get_count"
-    CATEGORY = "video"
+    CATEGORY = "Video Tiler"
 
     def get_count(self, tile_config: tuple):
         _, _, _, _, tile_specs = parse_tile_config(tile_config)

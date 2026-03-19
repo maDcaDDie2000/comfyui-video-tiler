@@ -88,7 +88,7 @@ class VideoTileMerge:
     RETURN_TYPES = ("IMAGE",)
     RETURN_NAMES = ("IMAGE",)
     FUNCTION = "merge"
-    CATEGORY = "video"
+    CATEGORY = "Video Tiler"
 
     def merge(self, tile_config, tiles):
         if isinstance(tiles, (list, tuple)):

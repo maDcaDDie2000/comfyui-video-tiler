@@ -39,7 +39,7 @@ class VideoTileProcessLoop:
     RETURN_TYPES = ("IMAGE", "INT")
     RETURN_NAMES = ("IMAGE", "tiles_processed")
     FUNCTION = "process_loop"
-    CATEGORY = "video"
+    CATEGORY = "Video Tiler"
 
     def process_loop(self, images: torch.Tensor, tile_config: tuple, processing_mode: str):
         _, _, _, _, tile_specs = parse_tile_config(tile_config)

@@ -31,7 +31,7 @@ class RemainingToIndex:
     RETURN_TYPES = ("INT",)
     RETURN_NAMES = ("index",)
     FUNCTION = "convert"
-    CATEGORY = "video"
+    CATEGORY = "Video Tiler"
 
     def convert(self, total: int, remaining: int):
         index = max(0, total - remaining)
@@ -57,7 +57,7 @@ class TileLoopOpen:
     RETURN_TYPES = ("IMAGE", "INT", "TILE_CONFIG", "FLOW_CONTROL", "ACCUMULATION")
     RETURN_NAMES = ("tile", "tile_index", "tile_config", "flow_control", "accumulation")
     FUNCTION = "open"
-    CATEGORY = "video"
+    CATEGORY = "Video Tiler"
 
     def open(self, images, tile_config):
         if not _HAS_EXECUTION:
@@ -105,7 +105,7 @@ class TileLoopClose:
     RETURN_NAMES = ("tiles",)
     OUTPUT_IS_LIST = (True,)
     FUNCTION = "close"
-    CATEGORY = "video"
+    CATEGORY = "Video Tiler"
 
     def close(self, flow_control, **kwargs):
         if not _HAS_EXECUTION:

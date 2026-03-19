@@ -99,7 +99,7 @@ class VideoTileSlice:
     RETURN_TYPES = tuple(["IMAGE"] * MAX_TILES + ["TILE_CONFIG", "IMAGE"])
     RETURN_NAMES = tuple([f"tile_{i}" for i in range(MAX_TILES)] + ["tile_config", "visualization"])
     FUNCTION = "slice"
-    CATEGORY = "video"
+    CATEGORY = "Video Tiler"
 
     def slice(
         self,
