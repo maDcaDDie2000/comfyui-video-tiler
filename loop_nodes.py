@@ -28,6 +28,7 @@ class AccumulateTile:
 
     def accumulate(self, to_add, accumulation=None):
         if accumulation is None:
+            print("[Video Tiler] Tile 1 processed")
             return ([to_add],)
         if isinstance(accumulation, dict) and "accum" in accumulation:
             lst = accumulation["accum"] + [to_add]
@@ -35,6 +36,7 @@ class AccumulateTile:
             lst = list(accumulation) + [to_add]
         else:
             lst = [to_add]
+        print(f"[Video Tiler] Tile {len(lst)} processed")
         return (lst,)
 
 

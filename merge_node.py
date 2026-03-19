@@ -32,6 +32,22 @@ def _feather_mask(w: int, h: int, feather: float) -> torch.Tensor:
     return mask
 
 
+def _normalize_tile(t):
+    """Unwrap (tensor,) from node output format; ensure 4D (B,H,W,C)."""
+    if isinstance(t, (list, tuple)) and len(t) > 0:
+        t = t[0]
+    if not isinstance(t, torch.Tensor):
+        return t
+    s = t.shape
+    if len(s) == 2:
+        t = t.unsqueeze(0).unsqueeze(-1)
+    elif len(s) == 3:
+        t = t.unsqueeze(0)
+    elif len(s) == 4 and s[-1] not in (3, 4) and s[1] in (3, 4):
+        t = t.permute(0, 2, 3, 1)
+    return t
+
+
 def merge_tiles(
     tiles: list[torch.Tensor],
     config_tuple: tuple,
@@ -43,20 +59,23 @@ def merge_tiles(
     """
     width, height, multiple, feather, tile_specs = parse_tile_config(config_tuple)
 
-    # Use first tile to get batch size and channels
-    B = tiles[0].shape[0]
-    C = tiles[0].shape[3]
+    tiles_list = [_normalize_tile(t) for t in tiles]
+    if not tiles_list:
+        raise ValueError("No tiles to merge - Tile Loop produced empty list")
+    first = tiles_list[0]
+    if len(first.shape) < 4:
+        raise ValueError(f"Tile shape {first.shape} - expected (B,H,W,C)")
+    B, C = first.shape[0], first.shape[3]
 
-    # Allocate output (single allocation - "before" state)
-    output = torch.zeros((B, height, width, C), dtype=tiles[0].dtype, device=tiles[0].device)
+    output = torch.zeros((B, height, width, C), dtype=first.dtype, device=first.device)
 
     # Sort by order: normal first, then overlaps
     sorted_specs = sorted(tile_specs, key=lambda t: t.order)
 
     for idx, spec in enumerate(sorted_specs):
-        if idx >= len(tiles):
+        if idx >= len(tiles_list):
             break
-        tile = tiles[idx]
+        tile = tiles_list[idx]
         x, y, w, h = spec.x, spec.y, spec.w, spec.h
 
         if spec.type == "normal":
@@ -95,5 +114,7 @@ class VideoTileMerge:
             tiles_list = list(tiles)
         else:
             tiles_list = [tiles]
+        print(f"[Video Tiler] Merging {len(tiles_list)} tiles")
         result = merge_tiles(tiles_list, tile_config)
+        print("[Video Tiler] Merge complete")
         return (result,)
