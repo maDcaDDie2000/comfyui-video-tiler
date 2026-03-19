@@ -10,7 +10,6 @@ from .loop_nodes import (
     _HAS_EXECUTION,
 )
 
-# Main nodes - what users need
 _node_mappings = {
     "VideoTileSlice": VideoTileSlice,
     "VideoTileMerge": VideoTileMerge,
@@ -25,7 +24,6 @@ _display_mappings = {
     "AccumulateNode": "Collect Tile",
 }
 
-# Internal nodes - used by Tile Loop, hidden in subcategory
 _internal_mappings = {
     "IntMathOperation": IntMathOperation,
     "IntConditions": IntConditions,

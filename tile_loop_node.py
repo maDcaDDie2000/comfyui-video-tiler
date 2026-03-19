@@ -58,7 +58,7 @@ class TileLoopOpen:
 class TileLoopClose:
     """
     Close tile loop - collects processed tiles from each iteration.
-    Connect: your processing -> Collect Tile -> TileLoopClose (initial_value1=accumulation).
+    Connect: your processing -> Collect Tile -> TileLoopClose (accumulation input).
     Output: list of tiles for Merge.
     """
 
@@ -67,12 +67,7 @@ class TileLoopClose:
         return {
             "required": {
                 "flow_control": ("FLOW_CONTROL", {"rawLink": True}),
-            },
-            "optional": {
-                "initial_value1": ("ACCUMULATION", {"rawLink": True}),
-                "initial_value2": ("*", {"rawLink": True}),
-                "initial_value3": ("*", {"rawLink": True}),
-                "initial_value4": ("*", {"rawLink": True}),
+                "accumulation": ("ACCUMULATION", {"rawLink": True}),
             },
         }
 
@@ -82,11 +77,15 @@ class TileLoopClose:
     FUNCTION = "close"
     CATEGORY = "Video Tiler"
 
-    def close(self, flow_control, **kwargs):
+    def close(self, flow_control, accumulation):
         if not _HAS_EXECUTION:
             raise RuntimeError("Tile Loop requires ComfyUI with comfy_execution.")
         graph = GraphBuilder()
-        loop_close = graph.node("ForLoopClose", flow_control=flow_control, **kwargs)
+        loop_close = graph.node(
+            "ForLoopClose",
+            flow_control=flow_control,
+            initial_value1=accumulation,
+        )
         acc_to_list = graph.node("AccumulationToListNode", accumulation=loop_close.out(0))
         return {
             "result": (acc_to_list.out(0),),
