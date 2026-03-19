@@ -2,6 +2,8 @@
 
 Memory-efficient video/image tiling for ComfyUI with overlap tiles, gaps, and feather blending. **No duplicate storage**—slice uses tensor views, merge uses a single output buffer.
 
+*Vibe coded.*
+
 ## Features
 
 - **Overlap tiles** – Seam/overlap tiles cover gaps and blend over normal tiles
