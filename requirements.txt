@@ -1,0 +1,2 @@
+# ComfyUI Video Tiler - No extra dependencies required
+# Uses PyTorch (already provided by ComfyUI)
