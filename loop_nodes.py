@@ -16,34 +16,26 @@ NUM_FLOW_SOCKETS = 5
 
 
 class AccumulateTile:
+    """Appends to_add to accumulation; outputs the list (combines accumulate + to_list)."""
     @classmethod
     def INPUT_TYPES(cls):
-        return {"required": {"to_add": ("*",)}, "optional": {"accumulation": ("ACCUMULATION",)}}
-    RETURN_TYPES = ("ACCUMULATION",)
-    RETURN_NAMES = ("accumulation",)
+        return {"required": {"to_add": ("*",)}, "optional": {"accumulation": ("*",)}}
+    RETURN_TYPES = ("*",)
+    RETURN_NAMES = ("list",)
+    OUTPUT_IS_LIST = (True,)
     FUNCTION = "accumulate"
     CATEGORY = "Video Tiler"
 
     def accumulate(self, to_add, accumulation=None):
         if accumulation is None:
-            value = [to_add]
+            return ([to_add],)
+        if isinstance(accumulation, dict) and "accum" in accumulation:
+            lst = accumulation["accum"] + [to_add]
+        elif isinstance(accumulation, (list, tuple)):
+            lst = list(accumulation) + [to_add]
         else:
-            value = accumulation["accum"] + [to_add]
-        return ({"accum": value},)
-
-
-class AccumulationToListNode:
-    @classmethod
-    def INPUT_TYPES(cls):
-        return {"required": {"accumulation": ("ACCUMULATION",)}}
-    RETURN_TYPES = ("*",)
-    RETURN_NAMES = ("list",)
-    OUTPUT_IS_LIST = (True,)
-    FUNCTION = "to_list"
-    CATEGORY = "Video Tiler"
-
-    def to_list(self, accumulation):
-        return (accumulation["accum"],)
+            lst = [to_add]
+        return (lst,)
 
 
 class IntMathOperation:
