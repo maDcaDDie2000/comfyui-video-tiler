@@ -155,7 +155,7 @@ def compute_layout(
                 ))
                 order += 1
 
-    # 4. Overlap tiles (corners - on top of seam overlaps) - order 3
+    # 4. Overlap tiles (corners - on top of seam overlaps) - order 1000 so always topmost
     if tiles_x > 1 and tiles_y > 1 and gap_x > 0 and gap_y > 0:
         for col in range(tiles_x - 1):
             for row in range(tiles_y - 1):
@@ -178,7 +178,7 @@ def compute_layout(
                     type="overlap_corner",
                     x=x1, y=y1, w=x2 - x1, h=y2 - y1,
                     col=col, row=row,
-                    order=order,
+                    order=10000 + order,
                 ))
                 order += 1
 

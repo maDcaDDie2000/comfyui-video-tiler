@@ -59,7 +59,7 @@ def create_visualization(
             img[y1 : y1 + 2, x1:x2, :] = [0, 0.4, 1.0]
             img[y2 - 2 : y2, x1:x2, :] = [0, 0.4, 1.0]
 
-    # Draw feather region (semi-transparent overlay at tile edges)
+    # Draw feather region (semi-transparent overlay at tile edges - orange/amber for visibility)
     if feather > 0:
         for t in tiles:
             if t.type != "normal":
@@ -67,13 +67,13 @@ def create_visualization(
                 x2, y2 = t.x + t.w, t.y + t.h
                 fe = int(feather)
                 if fe > 0:
-                    overlay = np.array([1.0, 0.7, 0.7], dtype=np.float32)
+                    overlay = np.array([1.0, 0.5, 0.0], dtype=np.float32)
                     for i in range(min(fe, t.w // 2)):
-                        alpha = 0.15 * (1 - i / max(fe, 1))
+                        alpha = 0.55 * (1 - i / max(fe, 1))
                         img[y1:y2, x1 + i, :] = img[y1:y2, x1 + i, :] * (1 - alpha) + overlay * alpha
                         img[y1:y2, x2 - 1 - i, :] = img[y1:y2, x2 - 1 - i, :] * (1 - alpha) + overlay * alpha
                     for i in range(min(fe, t.h // 2)):
-                        alpha = 0.15 * (1 - i / max(fe, 1))
+                        alpha = 0.55 * (1 - i / max(fe, 1))
                         img[y1 + i, x1:x2, :] = img[y1 + i, x1:x2, :] * (1 - alpha) + overlay * alpha
                         img[y2 - 1 - i, x1:x2, :] = img[y2 - 1 - i, x1:x2, :] * (1 - alpha) + overlay * alpha
 
@@ -110,7 +110,7 @@ def create_visualization(
     pil_img = Image.fromarray((img * 255).astype(np.uint8))
     draw = ImageDraw.Draw(pil_img)
     import os
-    font_size = max(12, min(24, width // 40))
+    font_size = max(8, min(12, width // 80))
     font = None
     candidates = [
         os.path.join(os.environ.get("WINDIR", ""), "Fonts", "arial.ttf"),
@@ -127,11 +127,21 @@ def create_visualization(
     if font is None:
         font = ImageFont.load_default()
 
-    pad = 8
-    line_h = 18
-    box_w = 220
-    box_h = len(lines) * line_h + pad * 2
+    pad = 6
+    line_h = font_size + 4
     box_x, box_y = 8, 8
+    max_w = 0
+    for line in lines:
+        try:
+            bbox = font.getbbox(line)
+        except Exception:
+            try:
+                bbox = draw.textbbox((0, 0), line, font=font)
+            except Exception:
+                bbox = (0, 0, len(line) * (font_size + 2), font_size)
+        max_w = max(max_w, bbox[2] - bbox[0])
+    box_w = max(140, int(max_w) + pad * 2)
+    box_h = len(lines) * line_h + pad * 2
     draw.rectangle([box_x, box_y, box_x + box_w, box_y + box_h], fill=(30, 30, 30), outline=(100, 100, 100))
     for i, line in enumerate(lines):
         draw.text((box_x + pad, box_y + pad + i * line_h), line, fill=(255, 255, 255), font=font)
