@@ -50,25 +50,3 @@ class GetTile:
         return (tile, tile_index, tile_config)
 
 
-class GetTileCount:
-    """
-    Get the number of tiles from tile_config.
-    Use this to set loop iteration count (e.g. ForLoopOpen remaining).
-    """
-
-    @classmethod
-    def INPUT_TYPES(cls):
-        return {
-            "required": {
-                "tile_config": ("TILE_CONFIG", {"forceInput": True}),
-            },
-        }
-
-    RETURN_TYPES = ("INT", "TILE_CONFIG")
-    RETURN_NAMES = ("count", "tile_config")
-    FUNCTION = "get_count"
-    CATEGORY = "Video Tiler"
-
-    def get_count(self, tile_config: tuple):
-        _, _, _, _, tile_specs = parse_tile_config(tile_config)
-        return (len(tile_specs), tile_config)

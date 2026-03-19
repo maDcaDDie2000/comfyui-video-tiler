@@ -13,35 +13,10 @@ if _HAS_EXECUTION:
     from comfy_execution.graph_utils import GraphBuilder
 
 
-class RemainingToIndex:
-    """
-    Convert loop remaining to tile index. index = total - remaining.
-    For use with ForLoopOpen when building custom loops.
-    """
-
-    @classmethod
-    def INPUT_TYPES(cls):
-        return {
-            "required": {
-                "total": ("INT", {"default": 1, "min": 1, "max": 999}),
-                "remaining": ("INT", {"default": 1, "min": 0, "max": 999}),
-            },
-        }
-
-    RETURN_TYPES = ("INT",)
-    RETURN_NAMES = ("index",)
-    FUNCTION = "convert"
-    CATEGORY = "Video Tiler"
-
-    def convert(self, total: int, remaining: int):
-        index = max(0, total - remaining)
-        return (min(index, total - 1),)
-
-
 class TileLoopOpen:
     """
     Open a tile loop - outputs current tile and index for each iteration.
-    Chain your processing: tile -> your nodes -> Accumulate -> TileLoopClose.
+    Chain your processing: tile -> your nodes -> Collect Tile -> TileLoopClose.
     Fully self-contained, no external node packs.
     """
 
@@ -83,7 +58,7 @@ class TileLoopOpen:
 class TileLoopClose:
     """
     Close tile loop - collects processed tiles from each iteration.
-    Connect: your processing -> Accumulate -> TileLoopClose (initial_value1=accumulation).
+    Connect: your processing -> Collect Tile -> TileLoopClose (initial_value1=accumulation).
     Output: list of tiles for Merge.
     """
 

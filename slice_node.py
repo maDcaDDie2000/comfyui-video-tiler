@@ -7,9 +7,6 @@ import torch
 from .layout import TileSpec
 from .tile_config import create_tile_config
 
-# Max tiles: 5x5 normal (25) + overlaps. 4x4 = 16+12+12+9=49. Use 50.
-MAX_TILES = 50
-
 
 def slice_tiles_as_views(images: torch.Tensor, tiles: list[TileSpec]) -> list[torch.Tensor]:
     """Extract each tile as a view - no memory copy."""
@@ -81,7 +78,7 @@ def create_visualization(
 
 
 class VideoTileSlice:
-    """Slice video/image batch into tiles with gaps and overlaps. Outputs are views - no RAM copy."""
+    """Slice video/image batch into tiles with gaps and overlaps. Outputs a single tiles list (no copy)."""
 
     @classmethod
     def INPUT_TYPES(cls):
@@ -96,8 +93,9 @@ class VideoTileSlice:
             },
         }
 
-    RETURN_TYPES = tuple(["IMAGE"] * MAX_TILES + ["TILE_CONFIG", "IMAGE"])
-    RETURN_NAMES = tuple([f"tile_{i}" for i in range(MAX_TILES)] + ["tile_config", "visualization"])
+    RETURN_TYPES = ("IMAGE", "TILE_CONFIG", "IMAGE", "INT")
+    RETURN_NAMES = ("tiles", "tile_config", "visualization", "tile_count")
+    OUTPUT_IS_LIST = (True, False, False, False)
     FUNCTION = "slice"
     CATEGORY = "Video Tiler"
 
@@ -122,11 +120,6 @@ class VideoTileSlice:
         )
 
         tile_tensors = slice_tiles_as_views(images, tiles)
-
-        # Pad to MAX_TILES (reuse first tile - view, no copy)
-        while len(tile_tensors) < MAX_TILES:
-            tile_tensors.append(tile_tensors[0])
-
         viz = create_visualization(W, H, tiles, feather, B)
 
-        return tuple(tile_tensors[:MAX_TILES]) + (config_tuple, viz)
+        return (tile_tensors, config_tuple, viz, len(tile_tensors))

@@ -1,8 +1,7 @@
 from .slice_node import VideoTileSlice
 from .merge_node import VideoTileMerge
-from .get_tile_node import GetTile, GetTileCount
-from .tile_loop_node import RemainingToIndex, TileLoopOpen, TileLoopClose
-from .process_loop_node import VideoTileProcessLoop
+from .get_tile_node import GetTile
+from .tile_loop_node import TileLoopOpen, TileLoopClose
 from .loop_nodes import (
     IntMathOperation,
     IntConditions,
@@ -11,31 +10,32 @@ from .loop_nodes import (
     _HAS_EXECUTION,
 )
 
-# Build mappings - loop nodes only when comfy_execution available
+# Main nodes - what users need
 _node_mappings = {
     "VideoTileSlice": VideoTileSlice,
     "VideoTileMerge": VideoTileMerge,
     "GetTile": GetTile,
-    "GetTileCount": GetTileCount,
-    "RemainingToIndex": RemainingToIndex,
-    "VideoTileProcessLoop": VideoTileProcessLoop,
     "AccumulateNode": AccumulateNode,
-    "AccumulationToListNode": AccumulationToListNode,
-    "IntMathOperation": IntMathOperation,
-    "IntConditions": IntConditions,
 }
 
 _display_mappings = {
     "VideoTileSlice": "Video Tile Slice",
     "VideoTileMerge": "Video Tile Merge",
     "GetTile": "Get Tile",
-    "GetTileCount": "Get Tile Count",
-    "RemainingToIndex": "Remaining to Index",
-    "VideoTileProcessLoop": "Video Tile Process Loop",
-    "AccumulateNode": "Accumulate",
-    "AccumulationToListNode": "Accumulation to List",
+    "AccumulateNode": "Collect Tile",
+}
+
+# Internal nodes - used by Tile Loop, hidden in subcategory
+_internal_mappings = {
+    "IntMathOperation": IntMathOperation,
+    "IntConditions": IntConditions,
+    "AccumulationToListNode": AccumulationToListNode,
+}
+
+_internal_display = {
     "IntMathOperation": "Int Math",
     "IntConditions": "Int Condition",
+    "AccumulationToListNode": "Accumulation to List",
 }
 
 if _HAS_EXECUTION:
@@ -43,19 +43,26 @@ if _HAS_EXECUTION:
     _node_mappings.update({
         "TileLoopOpen": TileLoopOpen,
         "TileLoopClose": TileLoopClose,
+    })
+    _display_mappings.update({
+        "TileLoopOpen": "Tile Loop Open",
+        "TileLoopClose": "Tile Loop Close",
+    })
+    _internal_mappings.update({
         "WhileLoopOpen": WhileLoopOpen,
         "WhileLoopClose": WhileLoopClose,
         "ForLoopOpen": ForLoopOpen,
         "ForLoopClose": ForLoopClose,
     })
-    _display_mappings.update({
-        "TileLoopOpen": "Tile Loop Open",
-        "TileLoopClose": "Tile Loop Close",
+    _internal_display.update({
         "WhileLoopOpen": "While Loop Open",
         "WhileLoopClose": "While Loop Close",
         "ForLoopOpen": "For Loop Open",
         "ForLoopClose": "For Loop Close",
     })
+
+_node_mappings.update(_internal_mappings)
+_display_mappings.update(_internal_display)
 
 NODE_CLASS_MAPPINGS = _node_mappings
 NODE_DISPLAY_NAME_MAPPINGS = _display_mappings
