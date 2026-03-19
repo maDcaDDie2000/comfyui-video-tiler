@@ -80,7 +80,6 @@ class TileLoopClose:
 
     RETURN_TYPES = ("*",)
     RETURN_NAMES = ("tiles",)
-    OUTPUT_IS_LIST = (True,)
     FUNCTION = "close"
     CATEGORY = "Video Tiler"
 
@@ -95,11 +94,12 @@ class TileLoopClose:
             acc_node = graph.node("AccumulateTile", to_add=tile, accumulation=accumulation)
             while_open = flow_control[0]
             sub = graph.node("IntMathOperation", operation="subtract", a=[while_open, 1], b=1)
-            cond = graph.node("IntConditions", a=sub.out(0), b=0, operation=">")
+            cond = graph.node("IntConditions", a=[while_open, 1], b=0, operation=">")
             input_vals = {f"initial_value{i}": (acc_node.out(0) if i == 1 else None) for i in range(1, NUM_FLOW_SOCKETS)}
             while_close = graph.node("WhileLoopClose", flow_control=flow_control, condition=cond.out(0), initial_value0=sub.out(0), **input_vals)
+            tiles_list = while_close.out(1)
             return {
-                "result": (while_close.out(1),),
+                "result": (tiles_list,),
                 "expand": graph.finalize(),
             }
         except Exception as e:

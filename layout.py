@@ -76,18 +76,23 @@ def compute_layout(
     tiles_x: int,
     tiles_y: int,
     multiple: int,
-    overlap_extension: int,
+    overlap_extension_x: int,
+    overlap_extension_y: int,
 ) -> list[TileSpec]:
     """
     Compute full 2D tile layout with normal and overlap tiles.
 
-    overlap_extension: pixels to extend into each adjacent tile (multiple of multiple)
+    overlap_extension_x: horizontal overlap (pixels to extend into adjacent tiles)
+    overlap_extension_y: vertical overlap
     """
     tiles_x = max(1, min(5, tiles_x))
     tiles_y = max(1, min(5, tiles_y))
-    overlap_extension = _snap_to_multiple(overlap_extension, multiple)
-    if overlap_extension < multiple:
-        overlap_extension = multiple
+    overlap_x = _snap_to_multiple(overlap_extension_x, multiple)
+    overlap_y = _snap_to_multiple(overlap_extension_y, multiple)
+    if overlap_x < multiple:
+        overlap_x = multiple
+    if overlap_y < multiple:
+        overlap_y = multiple
 
     tile_w, gap_x, x_positions = _compute_axis_layout(width, tiles_x, multiple)
     tile_h, gap_y, y_positions = _compute_axis_layout(height, tiles_y, multiple)
@@ -112,7 +117,7 @@ def compute_layout(
     if tiles_y > 1 and gap_y > 0:
         for row in range(tiles_y - 1):
             y_gap_center = y_positions[row][1] + gap_y / 2
-            overlap_h = gap_y + 2 * overlap_extension
+            overlap_h = gap_y + 2 * overlap_y
             overlap_h = _snap_to_multiple(int(overlap_h), multiple)
             if overlap_h < multiple:
                 overlap_h = multiple
@@ -133,7 +138,7 @@ def compute_layout(
     if tiles_x > 1 and gap_x > 0:
         for col in range(tiles_x - 1):
             x_gap_center = x_positions[col][1] + gap_x / 2
-            overlap_w = gap_x + 2 * overlap_extension
+            overlap_w = gap_x + 2 * overlap_x
             overlap_w = _snap_to_multiple(int(overlap_w), multiple)
             if overlap_w < multiple:
                 overlap_w = multiple
@@ -156,8 +161,8 @@ def compute_layout(
             for row in range(tiles_y - 1):
                 x_gap_center = x_positions[col][1] + gap_x / 2
                 y_gap_center = y_positions[row][1] + gap_y / 2
-                overlap_w = gap_x + 2 * overlap_extension
-                overlap_h = gap_y + 2 * overlap_extension
+                overlap_w = gap_x + 2 * overlap_x
+                overlap_h = gap_y + 2 * overlap_y
                 overlap_w = _snap_to_multiple(int(overlap_w), multiple)
                 overlap_h = _snap_to_multiple(int(overlap_h), multiple)
                 if overlap_w < multiple:

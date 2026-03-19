@@ -25,7 +25,8 @@ def create_visualization(
     tiles_x: int,
     tiles_y: int,
     multiple: int,
-    overlap_extension: int,
+    overlap_extension_x: int,
+    overlap_extension_y: int,
     batch_size: int = 1,
 ) -> torch.Tensor:
     """
@@ -93,7 +94,7 @@ def create_visualization(
         f"Grid: {tiles_x}x{tiles_y}",
         f"Normal tile: {tile_w}x{tile_h}",
         f"Gap: {gap_x}x{gap_y}",
-        f"Overlap ext: {overlap_extension}",
+        f"Overlap ext: {overlap_extension_x}x{overlap_extension_y}",
         f"Feather: {feather}",
         f"Multiple: {multiple}",
     ]
@@ -152,7 +153,8 @@ class VideoTileSlice:
                 "tiles_x": ("INT", {"default": 2, "min": 1, "max": 5}),
                 "tiles_y": ("INT", {"default": 2, "min": 1, "max": 5}),
                 "multiple": ("INT", {"default": 16, "min": 1, "max": 64}),
-                "overlap_extension": ("INT", {"default": 32, "min": 0, "max": 256}),
+                "overlap_extension_x": ("INT", {"default": 32, "min": 0, "max": 256}),
+                "overlap_extension_y": ("INT", {"default": 32, "min": 0, "max": 256}),
                 "feather": ("FLOAT", {"default": 8.0, "min": 0.0, "max": 64.0}),
             },
         }
@@ -169,7 +171,8 @@ class VideoTileSlice:
         tiles_x: int,
         tiles_y: int,
         multiple: int,
-        overlap_extension: int,
+        overlap_extension_x: int,
+        overlap_extension_y: int,
         feather: float,
     ):
         B, H, W, C = images.shape
@@ -179,7 +182,8 @@ class VideoTileSlice:
             tiles_x=tiles_x,
             tiles_y=tiles_y,
             multiple=multiple,
-            overlap_extension=overlap_extension,
+            overlap_extension_x=overlap_extension_x,
+            overlap_extension_y=overlap_extension_y,
             feather=feather,
         )
 
@@ -187,7 +191,9 @@ class VideoTileSlice:
         viz = create_visualization(
             W, H, tiles, feather,
             tiles_x=tiles_x, tiles_y=tiles_y,
-            multiple=multiple, overlap_extension=overlap_extension,
+            multiple=multiple,
+            overlap_extension_x=overlap_extension_x,
+            overlap_extension_y=overlap_extension_y,
             batch_size=1,
         )
 

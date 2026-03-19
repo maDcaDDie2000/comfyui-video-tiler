@@ -114,7 +114,6 @@ class VideoTileMerge:
             tiles_list = list(tiles)
         else:
             tiles_list = [tiles]
-        print(f"[Video Tiler] Merging {len(tiles_list)} tiles")
+        print(f"[Video Tiler] Merging {len(tiles_list)} tiles → single IMAGE batch")
         result = merge_tiles(tiles_list, tile_config)
-        print("[Video Tiler] Merge complete")
         return (result,)

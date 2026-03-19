@@ -18,7 +18,8 @@ def create_tile_config(
     tiles_x: int,
     tiles_y: int,
     multiple: int,
-    overlap_extension: int,
+    overlap_extension_x: int,
+    overlap_extension_y: int,
     feather: float,
 ) -> tuple[list[TileSpec], tuple[Any, ...]]:
     """
@@ -33,18 +34,20 @@ def create_tile_config(
         tiles_x=tiles_x,
         tiles_y=tiles_y,
         multiple=multiple,
-        overlap_extension=overlap_extension,
+        overlap_extension_x=overlap_extension_x,
+        overlap_extension_y=overlap_extension_y,
     )
 
     # Serialize to tuple of primitives (ComfyUI workflow serialization)
     config_tuple = (
-        1,  # version
+        2,  # version
         width,
         height,
         tiles_x,
         tiles_y,
         multiple,
-        overlap_extension,
+        overlap_extension_x,
+        overlap_extension_y,
         feather,
         tuple(
             (t.type, t.x, t.y, t.w, t.h, t.col, t.row, t.order)
@@ -57,18 +60,34 @@ def create_tile_config(
 def parse_tile_config(config_tuple: tuple[Any, ...]) -> tuple[int, int, int, float, list[TileSpec]]:
     """
     Parse config tuple back to (width, height, multiple, feather, tile_specs).
+    Supports version 1 (single overlap) and version 2 (overlap_x, overlap_y).
     """
-    (
-        _version,
-        width,
-        height,
-        tiles_x,
-        tiles_y,
-        multiple,
-        _overlap_ext,
-        feather,
-        tiles_data,
-    ) = config_tuple
+    version = config_tuple[0]
+    if version >= 2:
+        (
+            _version,
+            width,
+            height,
+            tiles_x,
+            tiles_y,
+            multiple,
+            _overlap_x,
+            _overlap_y,
+            feather,
+            tiles_data,
+        ) = config_tuple
+    else:
+        (
+            _version,
+            width,
+            height,
+            tiles_x,
+            tiles_y,
+            multiple,
+            _overlap_ext,
+            feather,
+            tiles_data,
+        ) = config_tuple
 
     tiles = [
         TileSpec(
