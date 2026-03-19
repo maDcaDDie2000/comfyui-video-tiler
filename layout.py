@@ -97,6 +97,9 @@ def compute_layout(
     tile_w, gap_x, x_positions = _compute_axis_layout(width, tiles_x, multiple)
     tile_h, gap_y, y_positions = _compute_axis_layout(height, tiles_y, multiple)
 
+    overlap_x = min(overlap_x, max(tile_w // 2, multiple))
+    overlap_y = min(overlap_y, max(tile_h // 2, multiple))
+
     tiles: list[TileSpec] = []
     order = 0
 
@@ -114,9 +117,9 @@ def compute_layout(
             order += 1
 
     # 2. Overlap tiles (horizontal seams - between rows) - order 1
-    if tiles_y > 1 and gap_y > 0:
+    if tiles_y > 1 and overlap_y >= multiple:
         for row in range(tiles_y - 1):
-            y_gap_center = y_positions[row][1] + gap_y / 2
+            y_gap_center = y_positions[row][1] + (gap_y / 2 if gap_y > 0 else 0)
             overlap_h = gap_y + 2 * overlap_y
             overlap_h = _snap_to_multiple(int(overlap_h), multiple)
             if overlap_h < multiple:
@@ -135,9 +138,9 @@ def compute_layout(
                 order += 1
 
     # 3. Overlap tiles (vertical seams - between cols) - order 2
-    if tiles_x > 1 and gap_x > 0:
+    if tiles_x > 1 and overlap_x >= multiple:
         for col in range(tiles_x - 1):
-            x_gap_center = x_positions[col][1] + gap_x / 2
+            x_gap_center = x_positions[col][1] + (gap_x / 2 if gap_x > 0 else 0)
             overlap_w = gap_x + 2 * overlap_x
             overlap_w = _snap_to_multiple(int(overlap_w), multiple)
             if overlap_w < multiple:
@@ -155,12 +158,12 @@ def compute_layout(
                 ))
                 order += 1
 
-    # 4. Overlap tiles (corners - on top of seam overlaps) - order 1000 so always topmost
-    if tiles_x > 1 and tiles_y > 1 and gap_x > 0 and gap_y > 0:
+    # 4. Overlap tiles (corners - on top of seam overlaps) - order 10000 so always topmost
+    if tiles_x > 1 and tiles_y > 1 and overlap_x >= multiple and overlap_y >= multiple:
         for col in range(tiles_x - 1):
             for row in range(tiles_y - 1):
-                x_gap_center = x_positions[col][1] + gap_x / 2
-                y_gap_center = y_positions[row][1] + gap_y / 2
+                x_gap_center = x_positions[col][1] + (gap_x / 2 if gap_x > 0 else 0)
+                y_gap_center = y_positions[row][1] + (gap_y / 2 if gap_y > 0 else 0)
                 overlap_w = gap_x + 2 * overlap_x
                 overlap_h = gap_y + 2 * overlap_y
                 overlap_w = _snap_to_multiple(int(overlap_w), multiple)

@@ -163,8 +163,8 @@ class VideoTileSlice:
                 "tiles_x": ("INT", {"default": 2, "min": 1, "max": 5}),
                 "tiles_y": ("INT", {"default": 2, "min": 1, "max": 5}),
                 "multiple": ("INT", {"default": 16, "min": 1, "max": 64}),
-                "overlap_extension_x": ("INT", {"default": 32, "min": 0, "max": 256}),
-                "overlap_extension_y": ("INT", {"default": 32, "min": 0, "max": 256}),
+                "overlap_extension_x": ("INT", {"default": 32, "min": 0, "max": 4096}),
+                "overlap_extension_y": ("INT", {"default": 32, "min": 0, "max": 4096}),
                 "feather": ("FLOAT", {"default": 8.0, "min": 0.0, "max": 64.0}),
             },
         }
