@@ -13,11 +13,19 @@ def get_tile_by_index(
     config_tuple: tuple,
     tile_index: int,
 ) -> torch.Tensor:
-    """Extract tile at index as view - no copy."""
+    """Extract tile at index. Clamped to image bounds; contiguous for PIL compatibility."""
     _, _, _, _, tile_specs = parse_tile_config(config_tuple)
     tile_index = max(0, min(tile_index, len(tile_specs) - 1))
     spec = tile_specs[tile_index]
-    return images[:, spec.y : spec.y + spec.h, spec.x : spec.x + spec.w, :]
+    _, H, W, _ = images.shape
+    x1 = max(0, min(spec.x, W - 1))
+    y1 = max(0, min(spec.y, H - 1))
+    x2 = min(spec.x + spec.w, W)
+    y2 = min(spec.y + spec.h, H)
+    if x2 <= x1 or y2 <= y1:
+        return images[:, :1, :1, :].clone()  # fallback: 1x1 tile if bounds invalid
+    tile = images[:, y1:y2, x1:x2, :].contiguous()
+    return tile
 
 
 class GetTile:

@@ -9,6 +9,48 @@ from .layout import TileSpec
 from .tile_config import create_tile_config
 
 
+BYTES_PER_PIXEL = 16  # float32, 4 channels (IMAGE)
+
+
+def estimate_peak_memory(
+    width: int, height: int, tiles: list[TileSpec], batch_size: int = 1,
+) -> str:
+    """
+    Rough estimate of peak RAM/VRAM for VAE encode (per tile), VAE decode (per tile), and merge.
+    Assumes float32, 4 channels. VAE latent: 8x downscale, 4 channels.
+    """
+    B = max(1, batch_size)
+    total_tiles_pixels = sum(t.w * t.h for t in tiles)
+    largest_tile_pixels = max(t.w * t.h for t in tiles) if tiles else 0
+
+    # Merge: output buffer + all tiles held (ComfyUI collects before merge)
+    merge_output = B * width * height * BYTES_PER_PIXEL
+    merge_tiles = total_tiles_pixels * B * BYTES_PER_PIXEL
+    merge_peak = merge_output + merge_tiles
+
+    # VAE encode: input image + latent output + intermediate. ~2x input + latent for rough estimate.
+    latent_scale = 8  # typical 8x downscale
+    vae_encode_peak = B * largest_tile_pixels * BYTES_PER_PIXEL * 2  # input + output/intermediate
+
+    # VAE decode: latent input + image output
+    vae_decode_peak = (
+        B * (largest_tile_pixels // (latent_scale * latent_scale)) * BYTES_PER_PIXEL
+        + B * largest_tile_pixels * BYTES_PER_PIXEL
+    )
+
+    def _fmt(b: float) -> str:
+        if b >= 1e9:
+            return f"{b / 1e9:.1f} GB"
+        return f"{b / 1e6:.0f} MB"
+
+    return (
+        f"Est. peak:\n"
+        f"  VAE encode/tile: {_fmt(vae_encode_peak)}\n"
+        f"  VAE decode/tile: {_fmt(vae_decode_peak)}\n"
+        f"  Merge: {_fmt(merge_peak)} (output + {len(tiles)} tiles)"
+    )
+
+
 def slice_tiles_as_views(images: torch.Tensor, tiles: list[TileSpec]) -> list[torch.Tensor]:
     """Extract each tile as a view - no memory copy."""
     result = []
@@ -202,9 +244,9 @@ class VideoTileSlice:
             },
         }
 
-    RETURN_TYPES = ("IMAGE", "TILE_CONFIG", "IMAGE", "INT")
-    RETURN_NAMES = ("tiles", "tile_config", "visualization", "tile_count")
-    OUTPUT_IS_LIST = (True, False, False, False)
+    RETURN_TYPES = ("IMAGE", "TILE_CONFIG", "IMAGE", "INT", "STRING")
+    RETURN_NAMES = ("tiles", "tile_config", "visualization", "tile_count", "memory_estimate")
+    OUTPUT_IS_LIST = (True, False, False, False, False)
     FUNCTION = "slice"
     CATEGORY = "Video Tiler"
 
@@ -219,6 +261,7 @@ class VideoTileSlice:
         feather: float,
     ):
         B, H, W, C = images.shape
+        batch_size = int(B)
         tiles, config_tuple = create_tile_config(
             width=W,
             height=H,
@@ -239,6 +282,8 @@ class VideoTileSlice:
             overlap_extension_y=overlap_extension_y,
         )
 
+        mem_est = estimate_peak_memory(W, H, tiles, batch_size)
         print(f"[Video Tiler] Slice: {W}x{H} → {len(tiles)} tiles ({tiles_x}x{tiles_y} grid)")
+        print(mem_est)
 
-        return (tile_tensors, config_tuple, viz, len(tile_tensors))
+        return (tile_tensors, config_tuple, viz, len(tile_tensors), mem_est)
