@@ -45,6 +45,7 @@ class TileLoopOpen:
         try:
             _, _, _, _, tile_specs = parse_tile_config(tile_config)
             count = len(tile_specs)
+            print(f"[Video Tiler] TileLoopOpen: {count} tiles to process")
             graph = GraphBuilder()
             loop_open = graph.node("ForLoopOpen", remaining=count, initial_value1=None)
             remaining = loop_open.out(1)

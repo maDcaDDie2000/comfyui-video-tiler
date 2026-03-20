@@ -124,6 +124,7 @@ if _HAS_EXECUTION:
 
         def close(self, flow_control, condition, dynprompt=None, unique_id=None, **kwargs):
             if not condition:
+                print(f"[Video Tiler] WhileLoopClose: condition=False, exiting loop")
                 return tuple(kwargs.get(f"initial_value{i}", None) for i in range(NUM_FLOW_SOCKETS))
             upstream = {}
             self._explore_dependencies(unique_id, dynprompt, upstream)
