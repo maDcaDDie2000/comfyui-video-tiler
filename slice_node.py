@@ -60,6 +60,7 @@ def create_visualization(
             img[y2 - 2 : y2, x1:x2, :] = [0, 0.4, 1.0]
 
     # Draw feather region (semi-transparent overlay at tile edges - orange/amber for visibility)
+    # Skip feather on edges touching image border
     if feather > 0:
         for t in tiles:
             if t.type != "normal":
@@ -68,14 +69,26 @@ def create_visualization(
                 fe = int(feather)
                 if fe > 0:
                     overlay = np.array([1.0, 0.5, 0.0], dtype=np.float32)
-                    for i in range(min(fe, t.w // 2)):
-                        alpha = 0.55 * (1 - i / max(fe, 1))
-                        img[y1:y2, x1 + i, :] = img[y1:y2, x1 + i, :] * (1 - alpha) + overlay * alpha
-                        img[y1:y2, x2 - 1 - i, :] = img[y1:y2, x2 - 1 - i, :] * (1 - alpha) + overlay * alpha
-                    for i in range(min(fe, t.h // 2)):
-                        alpha = 0.55 * (1 - i / max(fe, 1))
-                        img[y1 + i, x1:x2, :] = img[y1 + i, x1:x2, :] * (1 - alpha) + overlay * alpha
-                        img[y2 - 1 - i, x1:x2, :] = img[y2 - 1 - i, x1:x2, :] * (1 - alpha) + overlay * alpha
+                    # Left edge - skip if at image border
+                    if x1 > 0:
+                        for i in range(min(fe, t.w // 2)):
+                            alpha = 0.55 * (1 - i / max(fe, 1))
+                            img[y1:y2, x1 + i, :] = img[y1:y2, x1 + i, :] * (1 - alpha) + overlay * alpha
+                    # Right edge - skip if at image border
+                    if x2 < width:
+                        for i in range(min(fe, t.w // 2)):
+                            alpha = 0.55 * (1 - i / max(fe, 1))
+                            img[y1:y2, x2 - 1 - i, :] = img[y1:y2, x2 - 1 - i, :] * (1 - alpha) + overlay * alpha
+                    # Top edge - skip if at image border
+                    if y1 > 0:
+                        for i in range(min(fe, t.h // 2)):
+                            alpha = 0.55 * (1 - i / max(fe, 1))
+                            img[y1 + i, x1:x2, :] = img[y1 + i, x1:x2, :] * (1 - alpha) + overlay * alpha
+                    # Bottom edge - skip if at image border
+                    if y2 < height:
+                        for i in range(min(fe, t.h // 2)):
+                            alpha = 0.55 * (1 - i / max(fe, 1))
+                            img[y2 - 1 - i, x1:x2, :] = img[y2 - 1 - i, x1:x2, :] * (1 - alpha) + overlay * alpha
 
     # Extract layout info from tiles
     normals = [t for t in tiles if t.type == "normal"]
@@ -162,10 +175,10 @@ class VideoTileSlice:
                 "images": ("IMAGE",),
                 "tiles_x": ("INT", {"default": 2, "min": 1, "max": 5}),
                 "tiles_y": ("INT", {"default": 2, "min": 1, "max": 5}),
-                "multiple": ("INT", {"default": 16, "min": 1, "max": 64}),
-                "overlap_extension_x": ("INT", {"default": 32, "min": 0, "max": 4096}),
-                "overlap_extension_y": ("INT", {"default": 32, "min": 0, "max": 4096}),
-                "feather": ("FLOAT", {"default": 8.0, "min": 0.0, "max": 64.0}),
+                "multiple": ("INT", {"default": 32, "min": 1, "max": 64}),
+                "overlap_extension_x": ("INT", {"default": 128, "min": 0, "max": 4096}),
+                "overlap_extension_y": ("INT", {"default": 128, "min": 0, "max": 4096}),
+                "feather": ("FLOAT", {"default": 64.0, "min": 0.0, "max": 128.0}),
             },
         }
 

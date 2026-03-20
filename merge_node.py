@@ -8,26 +8,26 @@ import torch
 from .tile_config import parse_tile_config
 
 
-def _feather_mask(w: int, h: int, feather: float) -> torch.Tensor:
-    """Create feather mask: 1 in center, falloff at edges. Shape (h, w)."""
+def _feather_mask(
+    w: int, h: int, feather: float,
+    x: int, y: int, img_width: int, img_height: int,
+) -> torch.Tensor:
+    """Create feather mask: 1 in center, falloff at edges. No feather on edges touching image border. Shape (h, w)."""
     if feather <= 0:
         return torch.ones((h, w), dtype=torch.float32)
 
-    y = torch.linspace(0, 1, h)
-    x = torch.linspace(0, 1, w)
-    yy, xx = torch.meshgrid(y, x, indexing="ij")
+    yy = torch.linspace(0, 1, h)
+    xx = torch.linspace(0, 1, w)
+    yy, xx = torch.meshgrid(yy, xx, indexing="ij")
 
-    # Distance from each edge (0 at edge, 1 at center)
-    left = xx * (w / max(feather, 1))
-    right = (1 - xx) * (w / max(feather, 1))
-    top = yy * (h / max(feather, 1))
-    bottom = (1 - yy) * (h / max(feather, 1))
+    # Distance from each edge (0 at edge, 1 at center). Use 1 (no feather) if edge touches image border.
+    feather_w = max(feather, 1)
+    feather_h = max(feather, 1)
+    left = torch.ones((h, w), dtype=torch.float32) if x == 0 else torch.clamp(xx * (w / feather_w), 0, 1)
+    right = torch.ones((h, w), dtype=torch.float32) if x + w == img_width else torch.clamp((1 - xx) * (w / feather_w), 0, 1)
+    top = torch.ones((h, w), dtype=torch.float32) if y == 0 else torch.clamp(yy * (h / feather_h), 0, 1)
+    bottom = torch.ones((h, w), dtype=torch.float32) if y + h == img_height else torch.clamp((1 - yy) * (h / feather_h), 0, 1)
 
-    # Clamp and min across edges
-    left = torch.clamp(left, 0, 1)
-    right = torch.clamp(right, 0, 1)
-    top = torch.clamp(top, 0, 1)
-    bottom = torch.clamp(bottom, 0, 1)
     mask = torch.minimum(torch.minimum(left, right), torch.minimum(top, bottom))
     return mask
 
@@ -82,8 +82,8 @@ def merge_tiles(
             # Normal tile: direct copy (no feather)
             output[:, y : y + h, x : x + w, :] = tile
         else:
-            # Overlap tile: feather blend on top
-            mask = _feather_mask(w, h, feather).to(tile.device)
+            # Overlap tile: feather blend on top (no feather on edges touching image border)
+            mask = _feather_mask(w, h, feather, x, y, width, height).to(tile.device)
             mask = mask.reshape(1, h, w, 1)
             existing = output[:, y : y + h, x : x + w, :]
             blended = existing * (1 - mask) + tile * mask
