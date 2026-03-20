@@ -88,7 +88,6 @@ def create_visualization_types(
     img = np.ones((height, width, 3), dtype=np.float32) * 0.95
 
     fe = max(1, int(feather))
-    white = np.array([1.0, 1.0, 1.0], dtype=np.float32)
 
     for t in sorted_tiles:
         x1, y1 = t.x, t.y
@@ -98,7 +97,9 @@ def create_visualization_types(
         if t.type == "normal":
             img[y1:y2, x1:x2, :] = color
         else:
-            # Overlap: solid in center, gradient in feather (skip edges at image border)
+            # Overlap: solid in center, gradient in feather toward adjacent tile color
+            # H/V overlap borders green → gradient orange↔green
+            # Corner overlaps border orange → gradient magenta↔orange
             h, w = y2 - y1, x2 - x1
             yy = np.linspace(0, 1, h)
             xx = np.linspace(0, 1, w)
@@ -107,9 +108,14 @@ def create_visualization_types(
             right = np.clip((1 - xx) * (w / fe), 0, 1) if x2 < width else np.ones((h, w))
             top = np.clip(yy * (h / fe), 0, 1) if y1 > 0 else np.ones((h, w))
             bottom = np.clip((1 - yy) * (h / fe), 0, 1) if y2 < height else np.ones((h, w))
-            mask = np.minimum(np.minimum(left, right), np.minimum(top, bottom))
+            # Geometric mean: gradient flows smoothly away from all edges toward center (no spiky corners)
+            mask = (left * right * top * bottom) ** 0.25
             mask = np.expand_dims(mask, axis=-1)
-            blended = color * mask + white * (1 - mask)
+            if t.type == "overlap_corner":
+                edge_color = np.array([1.0, 0.5, 0.0], dtype=np.float32)  # orange
+            else:
+                edge_color = np.array([0, 0.8, 0], dtype=np.float32)  # green
+            blended = color * mask + edge_color * (1 - mask)
             img[y1:y2, x1:x2, :] = blended
 
     return img
