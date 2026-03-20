@@ -38,6 +38,8 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "GetTile": "Get Tile",
     "TileLoopOpen": "Tile Loop Open",
     "TileLoopClose": "Tile Loop Close",
+    "ForLoopOpen": "For Loop Open",
+    "ForLoopClose": "For Loop Close",
 }
 
 __all__ = ["NODE_CLASS_MAPPINGS", "NODE_DISPLAY_NAME_MAPPINGS"]

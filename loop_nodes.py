@@ -204,7 +204,8 @@ if _HAS_EXECUTION:
             graph = GraphBuilder()
             while_open = flow_control[0]
             sub = graph.node("IntMathOperation", operation="subtract", a=[while_open, 1], b=1)
-            cond = graph.node("IntConditions", a=[while_open, 1], b=0, operation=">")
+            # Match execution-inversion-demo: use sub.out(0) (remaining-1) for condition
+            cond = graph.node("IntConditions", a=sub.out(0), b=0, operation=">")
             input_vals = {f"initial_value{i}": kwargs.get(f"initial_value{i}", None) for i in range(1, NUM_FLOW_SOCKETS)}
             while_close = graph.node("WhileLoopClose", flow_control=flow_control, condition=cond.out(0), initial_value0=sub.out(0), **input_vals)
             return {"result": tuple(while_close.out(i) for i in range(1, NUM_FLOW_SOCKETS)), "expand": graph.finalize()}

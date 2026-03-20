@@ -52,12 +52,20 @@ Reconstructs video from processed tiles. Uses `tile_config` from Slice—no sepa
 ### Get Tile
 Returns a single tile by index for manual extraction or parallel processing.
 
+### Tile Loop (sequential processing)
+Uses **For Loop Open** and **For Loop Close** (like execution-inversion-demo). Add **For Loop Open** so `flow_control` points to it.
+
+**Wiring:** Video Tile Slice `tile_count` → For Loop Open `remaining`; For Loop Open `flow_control` → Tile Loop Close; For Loop Open `remaining` → Tile Loop Open; For Loop Open `value1` → Tile Loop Close `accumulation`; Tile Loop Open `tile` → processing → Tile Loop Close `tile`; Tile Loop Close `tiles` → Video Tile Merge.
+
 ## Workflows
 
 ### Option A: Direct (no processing)
 Slice → Merge (connect `tiles` and `tile_config`).
 
-### Option B: Parallel (all tiles at once)
+### Option B: Tile Loop (sequential)
+Slice → For Loop Open (remaining=tile_count) → Tile Loop Open → processing → Tile Loop Close → Merge.
+
+### Option C: Parallel (all tiles at once)
 1. **Slice** → `tile_config`. Connect images to **Get Tile** × N (indices 0, 1, 2, …).
 2. Process each Get Tile output, connect to Merge’s `tiles` input (same order).
 3. Connect Slice’s `tile_config` to Merge’s `tile_config`.
