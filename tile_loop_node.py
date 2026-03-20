@@ -31,8 +31,8 @@ class TileLoopOpen:
             },
         }
 
-    RETURN_TYPES = ("IMAGE", "INT", "TILE_CONFIG", "FLOW_CONTROL", "ACCUMULATION")
-    RETURN_NAMES = ("tile", "tile_index", "tile_config", "flow_control", "accumulation")
+    RETURN_TYPES = ("IMAGE", "INT", "TILE_CONFIG", "FLOW_CONTROL", "ACCUMULATION", "INT")
+    RETURN_NAMES = ("tile", "tile_index", "tile_config", "flow_control", "accumulation", "remaining")
     FUNCTION = "open"
     CATEGORY = "Video Tiler"
 
@@ -58,7 +58,7 @@ class TileLoopOpen:
             sub = graph.node("IntMathOperation", a=count, b=remaining, operation="subtract")
             get_tile = graph.node("GetTile", images=images, tile_config=tile_config, tile_index=sub.out(0))
             return {
-                "result": (get_tile.out(0), sub.out(0), tile_config, while_open.out(0), while_open.out(2)),
+                "result": (get_tile.out(0), sub.out(0), tile_config, while_open.out(0), while_open.out(2), remaining),
                 "expand": graph.finalize(),
             }
         except Exception as e:
@@ -71,7 +71,8 @@ class TileLoopOpen:
 class TileLoopClose:
     """
     Close tile loop - receives processed tile directly (no separate Collect Tile).
-    Connect: your processing -> tile. Connect Tile Loop Open's accumulation -> accumulation.
+    Connect: your processing -> tile; Tile Loop Open's accumulation -> accumulation;
+    Tile Loop Open's remaining -> remaining.
     """
 
     @classmethod
@@ -81,6 +82,7 @@ class TileLoopClose:
                 "flow_control": ("FLOW_CONTROL", {"rawLink": True}),
                 "tile": ("IMAGE", {"forceInput": True}),
                 "accumulation": ("ACCUMULATION", {"rawLink": True}),
+                "remaining": ("INT", {"forceInput": True}),
             },
         }
 
@@ -89,7 +91,7 @@ class TileLoopClose:
     FUNCTION = "close"
     CATEGORY = "Video Tiler"
 
-    def close(self, flow_control, tile, accumulation):
+    def close(self, flow_control, tile, accumulation, remaining):
         if not _HAS_EXECUTION or GraphBuilder is None:
             raise RuntimeError(
                 "Tile Loop requires ComfyUI with comfy_execution. "
@@ -98,10 +100,10 @@ class TileLoopClose:
         try:
             graph = GraphBuilder()
             acc_node = graph.node("AccumulateTile", to_add=tile, accumulation=accumulation)
-            # Use WhileLoopClose directly (no ForLoopClose) so [while_open, 1] resolves to WhileLoopOpen
-            while_open = flow_control[0]
-            sub = graph.node("IntMathOperation", operation="subtract", a=[while_open, 1], b=1)
-            cond = graph.node("IntConditions", a=[while_open, 1], b=0, operation=">")
+            # Use remaining (resolved value) instead of [flow_control[0], 1] - rawLink gives
+            # TileLoopOpen node id so [7465, 1] wrongly resolves to tile_index (0)
+            sub = graph.node("IntMathOperation", operation="subtract", a=remaining, b=1)
+            cond = graph.node("IntConditions", a=remaining, b=0, operation=">")
             loop_close = graph.node(
                 "WhileLoopClose",
                 flow_control=flow_control,
