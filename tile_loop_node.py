@@ -47,12 +47,18 @@ class TileLoopOpen:
             count = len(tile_specs)
             print(f"[Video Tiler] TileLoopOpen: {count} tiles to process")
             graph = GraphBuilder()
-            loop_open = graph.node("ForLoopOpen", remaining=count, initial_value1=None)
-            remaining = loop_open.out(1)
+            # Use WhileLoopOpen directly (no ForLoopOpen) so flow_control links resolve correctly
+            while_open = graph.node(
+                "WhileLoopOpen",
+                condition=True,
+                initial_value0=count,
+                initial_value1=None,
+            )
+            remaining = while_open.out(1)
             sub = graph.node("IntMathOperation", a=count, b=remaining, operation="subtract")
             get_tile = graph.node("GetTile", images=images, tile_config=tile_config, tile_index=sub.out(0))
             return {
-                "result": (get_tile.out(0), sub.out(0), tile_config, loop_open.out(0), loop_open.out(2)),
+                "result": (get_tile.out(0), sub.out(0), tile_config, while_open.out(0), while_open.out(2)),
                 "expand": graph.finalize(),
             }
         except Exception as e:
@@ -92,8 +98,18 @@ class TileLoopClose:
         try:
             graph = GraphBuilder()
             acc_node = graph.node("AccumulateTile", to_add=tile, accumulation=accumulation)
-            loop_close = graph.node("ForLoopClose", flow_control=flow_control, initial_value1=acc_node.out(0))
-            tiles_list = loop_close.out(0)
+            # Use WhileLoopClose directly (no ForLoopClose) so [while_open, 1] resolves to WhileLoopOpen
+            while_open = flow_control[0]
+            sub = graph.node("IntMathOperation", operation="subtract", a=[while_open, 1], b=1)
+            cond = graph.node("IntConditions", a=[while_open, 1], b=0, operation=">")
+            loop_close = graph.node(
+                "WhileLoopClose",
+                flow_control=flow_control,
+                condition=cond.out(0),
+                initial_value0=sub.out(0),
+                initial_value1=acc_node.out(0),
+            )
+            tiles_list = loop_close.out(1)
             return {
                 "result": (tiles_list,),
                 "expand": graph.finalize(),
