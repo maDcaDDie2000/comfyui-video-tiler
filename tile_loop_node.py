@@ -36,6 +36,8 @@ class GetTileFromRemaining:
     CATEGORY = "Video Tiler"
 
     def get(self, images, tile_config, remaining):
+        if isinstance(remaining, (list, tuple)):
+            remaining = remaining[0] if remaining else 0
         _, _, _, _, tile_specs = parse_tile_config(tile_config)
         count = len(tile_specs)
         tile_index = max(0, min(count - remaining, count - 1))
@@ -132,6 +134,8 @@ class TileLoopOpen:
                 "Tile Loop requires ComfyUI with comfy_execution. "
                 "Use the parallel workflow: Slice → Get Tile (index 0,1,2...) → your processing → Merge."
             )
+        if isinstance(remaining, (list, tuple)):
+            remaining = remaining[0] if remaining else 0
         try:
             _, _, _, _, tile_specs = parse_tile_config(tile_config)
             count = len(tile_specs)
