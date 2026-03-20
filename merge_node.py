@@ -111,6 +111,9 @@ class VideoTileMerge:
     CATEGORY = "Video Tiler"
 
     def merge(self, tile_config, tiles):
+        # ComfyUI may pass tile_config as list (one per iteration) when in list context
+        if isinstance(tile_config, (list, tuple)) and len(tile_config) > 0:
+            tile_config = tile_config[0]
         if isinstance(tiles, (list, tuple)):
             tiles_list = list(tiles)
         else:
