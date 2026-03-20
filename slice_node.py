@@ -240,7 +240,7 @@ class VideoTileSlice:
                 "multiple": ("INT", {"default": 32, "min": 1, "max": 64}),
                 "overlap_extension_x": ("INT", {"default": 128, "min": 0, "max": 4096}),
                 "overlap_extension_y": ("INT", {"default": 128, "min": 0, "max": 4096}),
-                "feather": ("FLOAT", {"default": 64.0, "min": 0.0, "max": 128.0}),
+                "feather": ("FLOAT", {"default": 64.0, "min": 0.0, "max": 512.0}),
             },
         }
 
