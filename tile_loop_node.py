@@ -87,7 +87,7 @@ class TileForLoopOpen:
                 "GetTileFromRemaining",
                 images=images,
                 tile_config=tile_config,
-                remaining=[while_open, 1],  # value0 = remaining
+                remaining=while_open.out(1),  # value0 = remaining (use .out() for proper link)
             )
             return {
                 "result": (
