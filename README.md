@@ -52,26 +52,22 @@ Reconstructs video from processed tiles. Uses `tile_config` from Slice—no sepa
 ### Get Tile
 Returns a single tile by index for manual extraction or parallel processing.
 
-### Tile For Loop Open (recommended)
-Loop that feeds the **current tile** each iteration. Tile extraction is inside the loop body.
-
-**Wiring:** Video Tile Slice `tile_count` → Tile For Loop Open `tile_count`; Slice `images` + `tile_config` → Tile For Loop Open; Tile For Loop Open `tile` → processing → Tile Loop Close `tile`; Tile For Loop Open `flow_control` → Tile Loop Close; Tile For Loop Open `accumulation` → Tile Loop Close `accumulation`; Tile Loop Close `tiles` → Video Tile Merge.
-
-### Tile Loop Open (legacy)
-Uses `remaining` input; prefer **Tile For Loop Open** which feeds the tile directly.
-
 ## Workflows
 
-### Option A: Direct (no processing)
-Slice → Merge (connect `tiles` and `tile_config`).
+### Option A: Sequential (recommended) – Sequential Batcher pattern
+Uses ComfyUI's native list iteration. Slice outputs `tiles` as a list; ComfyUI runs downstream **once per tile** automatically.
 
-### Option B: Tile Loop (sequential) – recommended
-Slice → **Tile For Loop Open** (tile_count, images, tile_config) → processing → Tile Loop Close → Merge.
+**Wiring:** Slice `tiles` → your processing → Merge `tiles`. Slice `tile_config` → Merge `tile_config`.
+
+No loop nodes needed. Processing runs sequentially, one tile at a time (VRAM-friendly).
+
+### Option B: Direct (no processing)
+Slice → Merge (connect `tiles` and `tile_config`).
 
 ### Option C: Parallel (all tiles at once)
 1. **Slice** → `tile_config`. Connect images to **Get Tile** × N (indices 0, 1, 2, …).
-2. Process each Get Tile output, connect to Merge’s `tiles` input (same order).
-3. Connect Slice’s `tile_config` to Merge’s `tile_config`.
+2. Process each Get Tile output, connect to Merge `tiles` input (same order).
+3. Connect Slice `tile_config` to Merge `tile_config`.
 
 ## Layout Example
 
@@ -84,3 +80,13 @@ Slice → **Tile For Loop Open** (tile_count, images, tile_config) → processin
 ## Compatibility
 
 - Works with standard ComfyUI IMAGE type. Compatible with VideoHelperSuite (VHS).
+
+## Reference
+
+This pack follows the **Sequential Batcher** pattern (list iteration). Related packs:
+
+| Pack | Use case | Repo |
+|------|----------|------|
+| **ControlFlowUtils** | Best overall for looping (Loop Open / Loop Close) | [VykosX/ControlFlowUtils](https://github.com/VykosX/ControlFlowUtils) |
+| **Inspire Pack** | Best for foreach/list iteration | [ltdrdata/ComfyUI-Inspire-Pack](https://github.com/ltdrdata/ComfyUI-Inspire-Pack) |
+| **Sequential Batcher** | Best for video/batch loops (Image Batch To List, List To Batch) | [Meisoftcoltd/ComfyUI-Sequential-Batcher](https://github.com/Meisoftcoltd/ComfyUI-Sequential-Batcher) |

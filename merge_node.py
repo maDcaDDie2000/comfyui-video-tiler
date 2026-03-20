@@ -100,10 +100,11 @@ class VideoTileMerge:
         return {
             "required": {
                 "tile_config": ("TILE_CONFIG", {"forceInput": True}),
-                "tiles": ("IMAGE", {"multiple": True}),
+                "tiles": ("IMAGE",),
             },
         }
 
+    INPUT_IS_LIST = (False, True)  # tiles: list from Sequential Batcher–style iteration
     RETURN_TYPES = ("IMAGE",)
     RETURN_NAMES = ("IMAGE",)
     FUNCTION = "merge"
