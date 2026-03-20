@@ -28,8 +28,8 @@ def _feather_mask(
     top = torch.ones((h, w), dtype=torch.float32) if y == 0 else torch.clamp(yy * (h / feather_h), 0, 1)
     bottom = torch.ones((h, w), dtype=torch.float32) if y + h == img_height else torch.clamp((1 - yy) * (h / feather_h), 0, 1)
 
-    # Geometric mean: gradient flows smoothly away from all edges toward center (no spiky corners)
-    mask = (left * right * top * bottom) ** 0.25
+    # Linear falloff: min = constant slope (no ease-in/ease-out). Avoids visible seams.
+    mask = torch.minimum(torch.minimum(left, right), torch.minimum(top, bottom))
     return mask
 
 

@@ -108,8 +108,8 @@ def create_visualization_types(
             right = np.clip((1 - xx) * (w / fe), 0, 1) if x2 < width else np.ones((h, w))
             top = np.clip(yy * (h / fe), 0, 1) if y1 > 0 else np.ones((h, w))
             bottom = np.clip((1 - yy) * (h / fe), 0, 1) if y2 < height else np.ones((h, w))
-            # Geometric mean: gradient flows smoothly away from all edges toward center (no spiky corners)
-            mask = (left * right * top * bottom) ** 0.25
+            # Linear falloff (no ease-in/ease-out) to avoid visible seams
+            mask = np.minimum(np.minimum(left, right), np.minimum(top, bottom))
             mask = np.expand_dims(mask, axis=-1)
             if t.type == "overlap_corner":
                 edge_color = np.array([1.0, 0.5, 0.0], dtype=np.float32)  # orange
