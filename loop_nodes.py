@@ -140,7 +140,6 @@ if _HAS_EXECUTION:
 
         def close(self, flow_control, condition, dynprompt=None, unique_id=None, **kwargs):
             if not condition:
-                print(f"[Video Tiler] WhileLoopClose: condition=False, exiting loop")
                 return tuple(kwargs.get(f"initial_value{i}", None) for i in range(NUM_FLOW_SOCKETS))
             upstream = {}
             self._explore_dependencies(unique_id, dynprompt, upstream)
@@ -155,16 +154,22 @@ if _HAS_EXECUTION:
                 name = "Recurse" if node_id == unique_id else node_id
                 node = graph.node(original["class_type"], name)
                 node.set_override_display_id(node_id)
+            new_open = graph.lookup_node(open_node)
             for node_id in contained:
                 original = dynprompt.get_node(node_id)
                 node = graph.lookup_node("Recurse" if node_id == unique_id else node_id)
                 for k, v in original["inputs"].items():
-                    if is_link(v) and v[0] in contained:
+                    # TileLoopOpen.remaining must get updated remaining from loop (value0)
+                    if original.get("class_type") == "TileLoopOpen" and k == "remaining":
+                        node.set_input(k, new_open.out(1))
+                    # AccumulateTile.accumulation from ForLoopOpen.value1 (outside loop) -> use previous iteration (value1)
+                    elif original.get("class_type") == "AccumulateTile" and k == "accumulation" and is_link(v) and v[0] not in contained and v[1] == 2:
+                        node.set_input(k, new_open.out(2))
+                    elif is_link(v) and v[0] in contained:
                         parent = graph.lookup_node(v[0])
                         node.set_input(k, parent.out(v[1]))
                     else:
                         node.set_input(k, v)
-            new_open = graph.lookup_node(open_node)
             for i in range(NUM_FLOW_SOCKETS):
                 new_open.set_input(f"initial_value{i}", kwargs.get(f"initial_value{i}", None))
             my_clone = graph.lookup_node("Recurse")
