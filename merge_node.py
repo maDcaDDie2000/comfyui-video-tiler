@@ -67,7 +67,15 @@ def merge_tiles(
         raise ValueError(f"Tile shape {first.shape} - expected (B,H,W,C)")
     B, C = first.shape[0], first.shape[3]
 
-    output = torch.zeros((B, height, width, C), dtype=first.dtype, device=first.device)
+    # Prefer CUDA for merge to avoid exhausting CPU RAM on large outputs
+    if first.is_cuda:
+        device = first.device
+    elif torch.cuda.is_available():
+        device = torch.device("cuda:0")
+    else:
+        device = first.device
+
+    output = torch.zeros((B, height, width, C), dtype=first.dtype, device=device)
 
     # Sort by order: normal first, then overlaps
     sorted_specs = sorted(tile_specs, key=lambda t: t.order)
@@ -75,7 +83,7 @@ def merge_tiles(
     for idx, spec in enumerate(sorted_specs):
         if idx >= len(tiles_list):
             break
-        tile = tiles_list[idx]
+        tile = tiles_list[idx].to(device)
         x, y, w, h = spec.x, spec.y, spec.w, spec.h
 
         if spec.type == "normal":
