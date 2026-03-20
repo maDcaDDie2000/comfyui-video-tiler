@@ -1,7 +1,6 @@
 """
 Tile Loop - sequential tile processing.
-Matches execution-inversion-demo: user adds For Loop Open so flow_control points to it.
-Chain: For Loop Open -> Tile Loop Open (remaining) -> processing -> Tile Loop Close.
+TileForLoopOpen embeds tile extraction inside the loop so the loop feeds the current tile each iteration.
 """
 
 from .tile_config import parse_tile_config
@@ -15,10 +14,101 @@ except ImportError:
     GraphBuilder = None
 
 
+class GetTileFromRemaining:
+    """
+    Internal: get tile by remaining count. remaining=N -> tile index 0, remaining=N-1 -> index 1, etc.
+    Used inside TileForLoopOpen expansion so it gets cloned with the loop.
+    """
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "images": ("IMAGE",),
+                "tile_config": ("TILE_CONFIG", {"forceInput": True}),
+                "remaining": ("INT", {"forceInput": True}),
+            },
+        }
+
+    RETURN_TYPES = ("IMAGE", "INT", "TILE_CONFIG")
+    RETURN_NAMES = ("tile", "tile_index", "tile_config")
+    FUNCTION = "get"
+    CATEGORY = "Video Tiler"
+
+    def get(self, images, tile_config, remaining):
+        _, _, _, _, tile_specs = parse_tile_config(tile_config)
+        count = len(tile_specs)
+        tile_index = max(0, min(count - remaining, count - 1))
+        tile = get_tile_by_index(images, tile_config, tile_index)
+        return (tile, tile_index, tile_config)
+
+
+class TileForLoopOpen:
+    """
+    Tile loop open - loop feeds current tile each iteration.
+    Tile extraction is inside the loop body, so each iteration gets the correct tile.
+    Chain: Slice -> Tile For Loop Open -> your processing -> Tile Loop Close.
+    """
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "images": ("IMAGE",),
+                "tile_config": ("TILE_CONFIG", {"forceInput": True}),
+                "tile_count": ("INT", {"default": 1, "min": 1, "max": 100000}),
+            },
+        }
+
+    RETURN_TYPES = ("FLOW_CONTROL", "INT", "*", "IMAGE", "INT", "TILE_CONFIG")
+    RETURN_NAMES = ("flow_control", "remaining", "accumulation", "tile", "tile_index", "tile_config")
+    FUNCTION = "open"
+    CATEGORY = "Video Tiler"
+
+    def open(self, images, tile_config, tile_count):
+        if not _HAS_EXECUTION or GraphBuilder is None:
+            raise RuntimeError(
+                "Tile Loop requires ComfyUI with comfy_execution. "
+                "Use the parallel workflow: Slice → Get Tile (index 0,1,2...) → your processing → Merge."
+            )
+        try:
+            graph = GraphBuilder()
+            # WhileLoopOpen: value0=remaining, value1=accumulation (None initially)
+            while_open = graph.node(
+                "WhileLoopOpen",
+                condition=tile_count,
+                initial_value0=tile_count,
+                initial_value1=None,
+            )
+            # GetTileFromRemaining is INSIDE the expansion - gets cloned each iteration with new remaining
+            get_tile = graph.node(
+                "GetTileFromRemaining",
+                images=images,
+                tile_config=tile_config,
+                remaining=[while_open, 1],  # value0 = remaining
+            )
+            return {
+                "result": (
+                    "stub",
+                    tile_count,
+                    None,  # accumulation (value1)
+                    get_tile.out(0),
+                    get_tile.out(1),
+                    get_tile.out(2),
+                ),
+                "expand": graph.finalize(),
+            }
+        except Exception as e:
+            raise RuntimeError(
+                "Tile Loop requires loop infrastructure. Use the parallel workflow: "
+                "Slice → Get Tile (index 0,1,2...) → your processing → Merge."
+            ) from e
+
+
 class TileLoopOpen:
     """
-    Get current tile from loop. Connect For Loop Open's remaining -> remaining.
-    Chain: For Loop Open -> Tile Loop Open -> your processing -> Tile Loop Close.
+    Legacy: Get current tile from loop (remaining input).
+    Prefer Tile For Loop Open - it feeds the tile directly each iteration.
     """
 
     @classmethod

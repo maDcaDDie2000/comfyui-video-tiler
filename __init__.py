@@ -1,7 +1,7 @@
 from .slice_node import VideoTileSlice
 from .merge_node import VideoTileMerge
 from .get_tile_node import GetTile
-from .tile_loop_node import TileLoopOpen, TileLoopClose
+from .tile_loop_node import TileLoopOpen, TileLoopClose, TileForLoopOpen, GetTileFromRemaining
 from .loop_nodes import (
     AccumulateTile,
     ListLength,
@@ -18,8 +18,10 @@ NODE_CLASS_MAPPINGS = {
     "VideoTileSlice": VideoTileSlice,
     "VideoTileMerge": VideoTileMerge,
     "GetTile": GetTile,
+    "TileForLoopOpen": TileForLoopOpen,
     "TileLoopOpen": TileLoopOpen,
     "TileLoopClose": TileLoopClose,
+    "GetTileFromRemaining": GetTileFromRemaining,
     "AccumulateTile": AccumulateTile,
     "ListLength": ListLength,
     "IntMathOperation": IntMathOperation,
@@ -36,6 +38,7 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "VideoTileSlice": "Video Tile Slice",
     "VideoTileMerge": "Video Tile Merge",
     "GetTile": "Get Tile",
+    "TileForLoopOpen": "Tile For Loop Open",
     "TileLoopOpen": "Tile Loop Open",
     "TileLoopClose": "Tile Loop Close",
     "ForLoopOpen": "For Loop Open",

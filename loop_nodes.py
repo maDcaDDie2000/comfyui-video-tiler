@@ -159,8 +159,8 @@ if _HAS_EXECUTION:
                 original = dynprompt.get_node(node_id)
                 node = graph.lookup_node("Recurse" if node_id == unique_id else node_id)
                 for k, v in original["inputs"].items():
-                    # TileLoopOpen.remaining must get updated remaining from loop (value0)
-                    if original.get("class_type") == "TileLoopOpen" and k == "remaining":
+                    # TileLoopOpen / GetTileFromRemaining.remaining must get updated remaining from loop (value0)
+                    if original.get("class_type") in ("TileLoopOpen", "GetTileFromRemaining") and k == "remaining":
                         node.set_input(k, new_open.out(1))
                     # AccumulateTile.accumulation from ForLoopOpen.value1 (outside loop) -> use previous iteration (value1)
                     elif original.get("class_type") == "AccumulateTile" and k == "accumulation" and is_link(v) and v[0] not in contained and v[1] == 2:
