@@ -4,6 +4,7 @@ from .get_tile_node import GetTile
 from .tile_loop_node import TileLoopOpen, TileLoopClose
 from .loop_nodes import (
     AccumulateTile,
+    ListLength,
     IntMathOperation,
     IntConditions,
     ForLoopOpen,
@@ -20,6 +21,7 @@ NODE_CLASS_MAPPINGS = {
     "TileLoopOpen": TileLoopOpen,
     "TileLoopClose": TileLoopClose,
     "AccumulateTile": AccumulateTile,
+    "ListLength": ListLength,
     "IntMathOperation": IntMathOperation,
     "IntConditions": IntConditions,
 }

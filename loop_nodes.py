@@ -38,6 +38,22 @@ class AccumulateTile:
         return (lst,)
 
 
+class ListLength:
+    """Returns the length of a list."""
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {"required": {"lst": ("*",)}}
+    RETURN_TYPES = ("INT",)
+    RETURN_NAMES = ("length",)
+    FUNCTION = "length"
+    CATEGORY = "Video Tiler"
+
+    def length(self, lst):
+        if isinstance(lst, (list, tuple)):
+            return (len(lst),)
+        return (0,)
+
+
 class IntMathOperation:
     @classmethod
     def INPUT_TYPES(cls):
