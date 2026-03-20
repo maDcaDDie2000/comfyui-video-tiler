@@ -67,6 +67,8 @@ class IntConditions:
     CATEGORY = "Video Tiler"
 
     def cond(self, a, b, operation):
+        if operation == ">" and b == 0:
+            print(f"[Video Tiler] IntConditions: a={a!r} (type={type(a).__name__})")
         ops = {"==": lambda a,b: a==b, "!=": lambda a,b: a!=b, "<": lambda a,b: a<b,
                ">": lambda a,b: a>b, "<=": lambda a,b: a<=b, ">=": lambda a,b: a>=b}
         return (ops.get(operation, lambda a,b: False)(a, b),)
