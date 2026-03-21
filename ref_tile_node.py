@@ -43,8 +43,16 @@ class ReferenceTileSlice:
     CATEGORY = "Video Tiler"
 
     def slice_ref(self, reference_image: torch.Tensor, tile_config):
+        # ComfyUI may pass tile_config as list (one per iteration) when in list context
         if isinstance(tile_config, (list, tuple)) and len(tile_config) > 0:
-            tile_config = tile_config[0]
+            first = tile_config[0]
+            if isinstance(first, (list, tuple)) and len(first) >= 2 and first[0] in (1, 2):
+                tile_config = first
+        if not isinstance(tile_config, (list, tuple)) or len(tile_config) < 2 or tile_config[0] not in (1, 2):
+            raise ValueError(
+                "tile_config must be TILE_CONFIG from Video Tile Slice. "
+                "Connect tile_config output from Video Tile Slice to this node."
+            )
         _, _, _, _, tile_specs = parse_tile_config(tile_config)
         ref_tiles = slice_ref_tiles(reference_image, tile_specs)
         print(f"[Video Tiler] Ref slice: {len(ref_tiles)} tiles (sync with video tiles)")
