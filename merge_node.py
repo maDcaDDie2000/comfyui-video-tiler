@@ -49,6 +49,80 @@ def _normalize_tile(t):
     return t
 
 
+def _fixed_tile_weight_mask(
+    w: int, h: int, x: int, y: int,
+    img_w: int, img_h: int,
+    blur_x: int, blur_y: int,
+    device: torch.device,
+    dtype: torch.dtype,
+) -> torch.Tensor:
+    """Order-independent feather weights: internal edges only, taper in blur strips."""
+    ly = torch.arange(h, device=device, dtype=torch.float32).view(-1, 1).expand(h, w)
+    lx = torch.arange(w, device=device, dtype=torch.float32).view(1, -1).expand(h, w)
+    m = torch.ones((h, w), device=device, dtype=torch.float32)
+    if x > 0 and blur_x > 0:
+        m *= torch.where(lx < blur_x, lx / blur_x, torch.ones_like(m))
+    if y > 0 and blur_y > 0:
+        m *= torch.where(ly < blur_y, ly / blur_y, torch.ones_like(m))
+    if x + w < img_w and blur_x > 0:
+        d = (w - 1) - lx
+        m *= torch.where(d < blur_x, d / blur_x, torch.ones_like(m))
+    if y + h < img_h and blur_y > 0:
+        d = (h - 1) - ly
+        m *= torch.where(d < blur_y, d / blur_y, torch.ones_like(m))
+    return m
+
+
+def merge_fixed_grid_tiles(
+    tiles: list[torch.Tensor],
+    config_tuple: tuple,
+    device: torch.device | None = None,
+) -> torch.Tensor:
+    """v3 fixed tile layout: distance-weighted blend (order-independent), blur on interior seams only."""
+    (
+        _v,
+        width,
+        height,
+        _tw,
+        _th,
+        _overlap_x,
+        _overlap_y,
+        blur_x,
+        blur_y,
+        _pattern_id,
+        _tiles_data,
+    ) = config_tuple
+    tiles_list = [_normalize_tile(t) for t in tiles]
+    if not tiles_list:
+        raise ValueError("No tiles to merge")
+    first = tiles_list[0]
+    if len(first.shape) < 4:
+        raise ValueError(f"Tile shape {first.shape} - expected (B,H,W,C)")
+    B, C = first.shape[0], first.shape[3]
+    if first.is_cuda:
+        dev = first.device
+    elif torch.cuda.is_available():
+        dev = torch.device("cuda:0")
+    else:
+        dev = first.device
+
+    _, _, _, _, tile_specs = parse_tile_config(config_tuple)
+    acc = torch.zeros((B, height, width, C), dtype=first.dtype, device=dev)
+    wsum = torch.zeros((B, height, width), dtype=first.dtype, device=dev)
+    bx, by = max(0, blur_x), max(0, blur_y)
+    for idx, spec in enumerate(tile_specs):
+        if idx >= len(tiles_list):
+            break
+        tile = tiles_list[idx].to(dev)
+        x, y, w, h = spec.x, spec.y, spec.w, spec.h
+        mask = _fixed_tile_weight_mask(w, h, x, y, width, height, bx, by, dev, first.dtype)
+        mask_b = mask.reshape(1, h, w, 1)
+        acc[:, y : y + h, x : x + w, :] += tile * mask_b
+        wsum[:, y : y + h, x : x + w] += mask
+    wsum = wsum.clamp(min=torch.finfo(first.dtype).eps)
+    return acc / wsum.unsqueeze(-1)
+
+
 def merge_tiles(
     tiles: list[torch.Tensor],
     config_tuple: tuple,
@@ -58,6 +132,8 @@ def merge_tiles(
     Merge processed tiles into output. Writes into preallocated tensor.
     Overlap tiles are feathered on top of normal tiles.
     """
+    if config_tuple[0] == 3:
+        return merge_fixed_grid_tiles(tiles, config_tuple, device=device)
     width, height, multiple, feather, tile_specs = parse_tile_config(config_tuple)
 
     tiles_list = [_normalize_tile(t) for t in tiles]

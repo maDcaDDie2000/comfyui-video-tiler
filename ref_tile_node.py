@@ -46,9 +46,9 @@ class ReferenceTileSlice:
         # ComfyUI may pass tile_config as list (one per iteration) when in list context
         if isinstance(tile_config, (list, tuple)) and len(tile_config) > 0:
             first = tile_config[0]
-            if isinstance(first, (list, tuple)) and len(first) >= 2 and first[0] in (1, 2):
+            if isinstance(first, (list, tuple)) and len(first) >= 2 and first[0] in (1, 2, 3):
                 tile_config = first
-        if not isinstance(tile_config, (list, tuple)) or len(tile_config) < 2 or tile_config[0] not in (1, 2):
+        if not isinstance(tile_config, (list, tuple)) or len(tile_config) < 2 or tile_config[0] not in (1, 2, 3):
             raise ValueError(
                 "tile_config must be TILE_CONFIG from Video Tile Slice. "
                 "Connect tile_config output from Video Tile Slice to this node."

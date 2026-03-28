@@ -60,9 +60,32 @@ def create_tile_config(
 def parse_tile_config(config_tuple: tuple[Any, ...]) -> tuple[int, int, int, float, list[TileSpec]]:
     """
     Parse config tuple back to (width, height, multiple, feather, tile_specs).
-    Supports version 1 (single overlap) and version 2 (overlap_x, overlap_y).
+    v1–v2: grid seams. v3: fixed tiles; multiple=tile_w, feather=max blur for legacy callers.
     """
     version = config_tuple[0]
+    if version == 3:
+        (
+            _v,
+            width,
+            height,
+            tile_w,
+            _tile_h,
+            _ox,
+            _oy,
+            blur_x,
+            blur_y,
+            _pattern_id,
+            tiles_data,
+        ) = config_tuple
+        tiles = [
+            TileSpec(
+                type=t[0],
+                x=t[1], y=t[2], w=t[3], h=t[4],
+                col=t[5], row=t[6], order=t[7],
+            )
+            for t in tiles_data
+        ]
+        return width, height, tile_w, float(max(blur_x, blur_y)), tiles
     if version >= 2:
         (
             _version,

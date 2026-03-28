@@ -1,4 +1,5 @@
 from .slice_node import VideoTileSlice
+from .fixed_slice_node import VideoTileSliceFixed
 from .merge_node import VideoTileMerge
 from .get_tile_node import GetTile
 from .ref_tile_node import ReferenceTileSlice
@@ -7,12 +8,14 @@ from .ref_tile_node import ReferenceTileSlice
 # downstream once per tile, Merge collects with INPUT_IS_LIST. No custom loop nodes.
 NODE_CLASS_MAPPINGS = {
     "VideoTileSlice": VideoTileSlice,
+    "VideoTileSliceFixed": VideoTileSliceFixed,
     "VideoTileMerge": VideoTileMerge,
     "GetTile": GetTile,
     "ReferenceTileSlice": ReferenceTileSlice,
 }
 NODE_DISPLAY_NAME_MAPPINGS = {
     "VideoTileSlice": "Video Tile Slice",
+    "VideoTileSliceFixed": "Video Tile Slice (Fixed)",
     "VideoTileMerge": "Video Tile Merge",
     "GetTile": "Get Tile",
     "ReferenceTileSlice": "Reference Tile Slice",

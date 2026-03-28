@@ -163,6 +163,46 @@ def create_visualization_types(
     return img
 
 
+def tile_layout_label_string(
+    width: int,
+    height: int,
+    tiles: list[TileSpec],
+    feather: float,
+    tiles_x: int,
+    tiles_y: int,
+    multiple: int,
+    overlap_extension_x: int,
+    overlap_extension_y: int,
+) -> str:
+    """Multiline label: tile sizes and layout (same content as viz info box)."""
+    normals = [t for t in tiles if t.type == "normal"]
+    overlaps = [t for t in tiles if t.type != "normal"]
+    tile_w = normals[0].w if normals else 0
+    tile_h = normals[0].h if normals else 0
+    gap_x = int(normals[1].x - normals[0].x - normals[0].w) if tiles_x > 1 and len(normals) > 1 else 0
+    gap_y = int(normals[tiles_x].y - normals[0].y - normals[0].h) if tiles_y > 1 and len(normals) > tiles_x else 0
+    ov_h = next((t for t in overlaps if t.type == "overlap_h"), None)
+    ov_v = next((t for t in overlaps if t.type == "overlap_v"), None)
+    ov_c = next((t for t in overlaps if t.type == "overlap_corner"), None)
+    lines = [
+        f"Output: {width}x{height}",
+        f"Grid: {tiles_x}x{tiles_y}",
+        f"Normal tile: {tile_w}x{tile_h}",
+        f"Gap: {gap_x}x{gap_y}",
+        f"Overlap ext: {overlap_extension_x}x{overlap_extension_y}",
+        f"Feather: {feather}",
+        f"Multiple: {multiple}",
+        f"Total tiles: {len(tiles)}",
+    ]
+    if ov_h:
+        lines.append(f"Overlap H: {ov_h.w}x{ov_h.h}")
+    if ov_v:
+        lines.append(f"Overlap V: {ov_v.w}x{ov_v.h}")
+    if ov_c:
+        lines.append(f"Overlap corner: {ov_c.w}x{ov_c.h}")
+    return "\n".join(lines)
+
+
 def create_visualization(
     width: int,
     height: int,
@@ -184,28 +224,12 @@ def create_visualization(
     img1 = create_visualization_labels(width, height, tiles)
     img2 = create_visualization_types(width, height, tiles, feather)
 
-    # Add info box to first image
-    normals = [t for t in tiles if t.type == "normal"]
-    overlaps = [t for t in tiles if t.type != "normal"]
-    tile_w = normals[0].w if normals else 0
-    tile_h = normals[0].h if normals else 0
-    gap_x = int(normals[1].x - normals[0].x - normals[0].w) if tiles_x > 1 and len(normals) > 1 else 0
-    gap_y = int(normals[tiles_x].y - normals[0].y - normals[0].h) if tiles_y > 1 and len(normals) > tiles_x else 0
-    ov_h = next((t for t in overlaps if t.type == "overlap_h"), None)
-    ov_v = next((t for t in overlaps if t.type == "overlap_v"), None)
-    ov_c = next((t for t in overlaps if t.type == "overlap_corner"), None)
-    lines = [
-        f"Output: {width}x{height}",
-        f"Grid: {tiles_x}x{tiles_y}",
-        f"Normal: {tile_w}x{tile_h}",
-        f"Gap: {gap_x}x{gap_y}",
-        f"Feather: {feather}",
-        f"Tiles: {len(tiles)}",
-    ]
-    if ov_h:
-        lines.append(f"Overlap H: {ov_h.w}x{ov_h.h}")
-    if ov_c:
-        lines.append(f"Overlap corner: {ov_c.w}x{ov_c.h}")
+    label = tile_layout_label_string(
+        width, height, tiles, feather,
+        tiles_x, tiles_y, multiple,
+        overlap_extension_x, overlap_extension_y,
+    )
+    lines = label.split("\n")
 
     pil1 = Image.fromarray((img1 * 255).astype(np.uint8))
     draw = ImageDraw.Draw(pil1)
@@ -216,8 +240,16 @@ def create_visualization(
         line_h = bbox[3] - bbox[1] + 4
     except Exception:
         line_h = 14
+    max_w = 0
+    for line in lines:
+        try:
+            bb = draw.textbbox((0, 0), line, font=font)
+            max_w = max(max_w, bb[2] - bb[0])
+        except Exception:
+            max_w = max(max_w, len(line) * 8)
     box_x, box_y = 8, 8
-    box_w, box_h = 140, len(lines) * line_h + pad * 2
+    box_w = max(140, int(max_w) + pad * 2)
+    box_h = len(lines) * line_h + pad * 2
     draw.rectangle([box_x, box_y, box_x + box_w, box_y + box_h], fill=(30, 30, 30), outline=(100, 100, 100))
     for i, line in enumerate(lines):
         draw.text((box_x + pad, box_y + pad + i * line_h), line, fill=(255, 255, 255), font=font)
@@ -244,9 +276,9 @@ class VideoTileSlice:
             },
         }
 
-    RETURN_TYPES = ("IMAGE", "TILE_CONFIG", "IMAGE", "INT", "STRING")
-    RETURN_NAMES = ("tiles", "tile_config", "visualization", "tile_count", "memory_estimate")
-    OUTPUT_IS_LIST = (True, False, False, False, False)
+    RETURN_TYPES = ("IMAGE", "TILE_CONFIG", "IMAGE", "INT", "STRING", "STRING")
+    RETURN_NAMES = ("tiles", "tile_config", "visualization", "tile_count", "memory_estimate", "layout_label")
+    OUTPUT_IS_LIST = (True, False, False, False, False, False)
     FUNCTION = "slice"
     CATEGORY = "Video Tiler"
 
@@ -283,7 +315,12 @@ class VideoTileSlice:
         )
 
         mem_est = estimate_peak_memory(W, H, tiles, batch_size)
+        layout_label = tile_layout_label_string(
+            W, H, tiles, feather,
+            tiles_x, tiles_y, multiple,
+            overlap_extension_x, overlap_extension_y,
+        )
         print(f"[Video Tiler] Slice: {W}x{H} → {len(tiles)} tiles ({tiles_x}x{tiles_y} grid)")
         print(mem_est)
 
-        return (tile_tensors, config_tuple, viz, len(tile_tensors), mem_est)
+        return (tile_tensors, config_tuple, viz, len(tile_tensors), mem_est, layout_label)
