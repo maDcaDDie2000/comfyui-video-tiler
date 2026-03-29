@@ -119,14 +119,6 @@ Slicer → Merge (connect `tiles` and `tile_config`).
 2. Process each branch; connect results to Merge `tiles` **in the same order** as tile indices.
 3. Connect slicer `tile_config` to Merge `tile_config`.
 
-## Layout example (Video Tile Slicer — var. size)
-
-512×512, 3×2 tiles, multiple 32:
-
-- Normal tiles: 160×256 each  
-- Gaps: 16px between tiles  
-- Overlap/seam tiles: cover gaps and extend into neighbors for blending  
-
 ## Compatibility
 
 - **LTX 2.3** — primary target; development and testing assume this stack
