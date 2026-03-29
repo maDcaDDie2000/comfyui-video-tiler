@@ -4,7 +4,10 @@ Fixed-size tile layout with fractional overlap and traversal patterns (row, colu
 
 from __future__ import annotations
 
+import colorsys
 from typing import Literal
+
+import numpy as np
 
 from .layout import TileSpec
 
@@ -207,3 +210,73 @@ def fixed_layout_label_string(
         f"Total tiles: {n_tiles}",
     ]
     return "\n".join(lines)
+
+
+def order_gradient_rgb(order: int, n_tiles: int) -> tuple[float, float, float]:
+    """
+    RGB 0–1 for traversal order: first tile cool (blue–cyan), last warm (red–orange).
+    """
+    if n_tiles <= 1:
+        r, g, b = colorsys.hsv_to_rgb(0.56, 0.82, 0.96)
+        return (r, g, b)
+    t = order / (n_tiles - 1)
+    h = 0.58 * (1.0 - t) + 0.02 * t
+    s = 0.78 + 0.12 * t
+    v = 0.90 + 0.08 * (1.0 - t)
+    r, g, b = colorsys.hsv_to_rgb(h, s, v)
+    return (float(r), float(g), float(b))
+
+
+def create_fixed_traversal_viz_labels(
+    width: int,
+    height: int,
+    tiles: list[TileSpec],
+) -> np.ndarray:
+    """Borders + index labels; colors follow traversal order (start→end gradient)."""
+    from PIL import Image, ImageDraw
+
+    from .slice_node import _get_font
+
+    n = len(tiles)
+    img = np.ones((height, width, 3), dtype=np.float32) * 0.95
+    for t in tiles:
+        x1, y1 = t.x, t.y
+        x2, y2 = t.x + t.w, t.y + t.h
+        color = list(order_gradient_rgb(t.order, n))
+        img[y1:y2, x1:x1 + 2, :] = color
+        img[y1:y2, x2 - 2 : x2, :] = color
+        img[y1 : y1 + 2, x1:x2, :] = color
+        img[y2 - 2 : y2, x1:x2, :] = color
+
+    pil_img = Image.fromarray((img * 255).astype(np.uint8))
+    draw = ImageDraw.Draw(pil_img)
+    font = _get_font(draw, width)
+    for t in tiles:
+        x1, y1 = t.x, t.y
+        x2, y2 = t.x + t.w, t.y + t.h
+        label = f"{t.order:02d}"
+        rgb = tuple(int(c * 255) for c in order_gradient_rgb(t.order, n))
+        pad = 4
+        for (lx, ly) in [(x1 + pad, y1 + pad), (x2 - 24, y1 + pad), (x1 + pad, y2 - 16), (x2 - 24, y2 - 16)]:
+            draw.text((lx, ly), label, fill=rgb, font=font)
+    return np.array(pil_img).astype(np.float32) / 255.0
+
+
+def create_fixed_traversal_viz_fill(
+    width: int,
+    height: int,
+    tiles: list[TileSpec],
+    _blur_max: float,
+) -> np.ndarray:
+    """
+    Solid fill per tile in traversal gradient color; later order paints over overlaps
+    so overlapping regions show the later tile hue.
+    """
+    n = len(tiles)
+    img = np.ones((height, width, 3), dtype=np.float32) * 0.95
+    for t in sorted(tiles, key=lambda x: x.order):
+        x1, y1 = t.x, t.y
+        x2, y2 = t.x + t.w, t.y + t.h
+        color = np.array(order_gradient_rgb(t.order, n), dtype=np.float32)
+        img[y1:y2, x1:x2, :] = color
+    return img

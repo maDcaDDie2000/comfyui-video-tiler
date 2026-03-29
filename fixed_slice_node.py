@@ -8,15 +8,13 @@ from __future__ import annotations
 import numpy as np
 import torch
 
-from .fixed_layout import compute_fixed_layout, fixed_layout_label_string
-from .layout import TileSpec
-from .slice_node import (
-    create_visualization_labels,
-    create_visualization_types,
-    estimate_peak_memory,
-    slice_tiles_as_views,
-    _get_font,
+from .fixed_layout import (
+    compute_fixed_layout,
+    create_fixed_traversal_viz_fill,
+    create_fixed_traversal_viz_labels,
+    fixed_layout_label_string,
 )
+from .slice_node import estimate_peak_memory, slice_tiles_as_views, _get_font
 
 
 def _build_fixed_visualization(
@@ -28,8 +26,8 @@ def _build_fixed_visualization(
 ) -> torch.Tensor:
     from PIL import Image, ImageDraw
 
-    img1 = create_visualization_labels(width, height, tiles)
-    img2 = create_visualization_types(width, height, tiles, blur_max)
+    img1 = create_fixed_traversal_viz_labels(width, height, tiles)
+    img2 = create_fixed_traversal_viz_fill(width, height, tiles, blur_max)
     pil1 = Image.fromarray((img1 * 255).astype(np.uint8))
     draw = ImageDraw.Draw(pil1)
     font = _get_font(draw, width)
