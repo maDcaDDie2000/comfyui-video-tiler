@@ -8,9 +8,9 @@ This was vibe coded for personal use. It is not actively maintained, and issues 
 
 ## Features
 
-- **Variable grid (Variable Tile Size)** – Explicit horizontal/vertical tile counts, gaps between tiles, seam tiles that extend into neighbors, per-axis overlap extension and feather
-- **Fixed grid (Fixed Tile Size)** – Constant `tile_width` × `tile_height`, overlap as a fraction of the smaller side (⅛–½), row/column/spiral/double-spiral order, `blur_fraction` for merge weight falloff
-- **Dual visualization** – `visualization` is a **2-frame** IMAGE batch: (1) layout/outline and labels, (2) type or traversal gradient. Variable slicer: borders + tile indices; second frame shows tile types and feather regions. Fixed slicer: traversal order as a **start→end color gradient**
+- **Video Tile Slicer (var. size)** – Grid layout: explicit horizontal/vertical tile counts, gaps, seam tiles into neighbors, per-axis overlap extension and feather
+- **Video Tile Slicer (fixed size)** – Constant `tile_width` × `tile_height`, overlap as a fraction of the shorter side (⅛–½), row/column/spiral/double-spiral order, `blur_fraction` for merge weight falloff
+- **Dual visualization** – `visualization` is a **2-frame** IMAGE batch: (1) layout/outline and labels, (2) type or traversal gradient. Variable-size slicer: borders + tile indices; second frame shows tile types and feather regions. Fixed-size slicer: traversal order as a **start→end color gradient**
 - **Diagnostics** – `memory_estimate` (STRING): rough VAE encode/decode and merge peaks; `layout_label` (STRING): human-readable layout summary
 - **Multiple-of-X** – Dimensions snapped to your multiple (e.g. 16, 32 for video models)
 - **Low RAM** – Slice outputs views (no copy where possible); merge writes into one shared tensor
@@ -26,15 +26,15 @@ Restart ComfyUI. Nodes appear under category **Video Tiler** with these display 
 
 | Internal class       | Display name        |
 |---------------------|---------------------|
-| `VideoTileSlice`    | **Variable Tile Size** |
-| `VideoTileSliceFixed` | **Fixed Tile Size** |
+| `VideoTileSlice`    | **Video Tile Slicer (var. size)** |
+| `VideoTileSliceFixed` | **Video Tile Slicer (fixed size)** |
 | `VideoTileMerge`    | **Video Tile Merge** |
 | `GetTile`           | **Get Tile** |
 | `ReferenceTileSlice`| **Reference Tile Slice** |
 
 ## Nodes
 
-### Variable Tile Size
+### Video Tile Slicer (var. size)
 
 Splits a video/image batch into a list of tiles using a **tiles_x × tiles_y** grid, gaps, and overlap/seam tiles.
 
@@ -49,9 +49,9 @@ Splits a video/image batch into a list of tiles using a **tiles_x × tiles_y** g
 
 **Outputs:** `tiles` (list of IMAGE views, `OUTPUT_IS_LIST`), `tile_config`, `visualization` (2 images), `tile_count`, `memory_estimate`, `layout_label`
 
-### Fixed Tile Size
+### Video Tile Slicer (fixed size)
 
-Same output **socket types** as Variable Tile Size, but layout is driven by tile dimensions and stride (fractional overlap), not a small fixed grid count.
+Same output **socket types** as **Video Tile Slicer (var. size)**, but layout is driven by tile dimensions and stride (fractional overlap), not a small fixed grid count.
 
 | Input | Description |
 |-------|-------------|
@@ -62,7 +62,7 @@ Same output **socket types** as Variable Tile Size, but layout is driven by tile
 | `pattern` | `row`, `column`, `spiral`, `double_spiral` |
 | `blur_fraction` | Weight falloff at tile edges for merge (0–1) |
 
-**Outputs:** Same as Variable Tile Size. `tile_config` uses an internal **v3** format; merge detects it and uses weighted fixed-grid blending.
+**Outputs:** Same as **Video Tile Slicer (var. size)**. `tile_config` uses an internal **v3** format; merge detects it and uses weighted fixed-grid blending.
 
 ### Video Tile Merge
 
@@ -70,10 +70,10 @@ Reconstructs the full image/video from processed tiles. Connect the **`tile_conf
 
 | Input | Description |
 |-------|-------------|
-| `tile_config` | From **Variable** or **Fixed Tile Size** |
+| `tile_config` | From **Video Tile Slicer (var. size)** or **Video Tile Slicer (fixed size)** |
 | `tiles` | Processed tiles (same list order as slice) |
 
-**Output:** merged `IMAGE`. Variable layouts use seam/corner feather rules; fixed **v3** layouts use per-tile weights with blending on internal seams only.
+**Output:** merged `IMAGE`. Grid-gap layouts from the variable-size slicer use seam/corner feather rules; **v3** layouts from the fixed-size slicer use per-tile weights with blending on internal seams only.
 
 ### Reference Tile Slice
 
@@ -103,7 +103,7 @@ No custom loop nodes required; processing runs one tile at a time (VRAM-friendly
 
 ### Option B: Reference aligned with video tiles
 
-**Variable / Fixed Tile Size** → `tile_config` → **Reference Tile Slice** (`reference_image` + `tile_config`). Use the reference tile list in parallel with the video tile list (same indices).
+**Video Tile Slicer (var. size)** or **Video Tile Slicer (fixed size)** → `tile_config` → **Reference Tile Slice** (`reference_image` + `tile_config`). Use the reference tile list in parallel with the video tile list (same indices).
 
 ### Option C: Direct (no processing)
 
@@ -115,7 +115,7 @@ Slicer → Merge (connect `tiles` and `tile_config`).
 2. Process each branch; connect results to Merge `tiles` **in the same order** as tile indices.
 3. Connect slicer `tile_config` to Merge `tile_config`.
 
-## Layout example (Variable Tile Size)
+## Layout example (Video Tile Slicer — var. size)
 
 512×512, 3×2 tiles, multiple 32:
 
@@ -127,13 +127,3 @@ Slicer → Merge (connect `tiles` and `tile_config`).
 
 - Standard ComfyUI **IMAGE** tensors `[B, H, W, C]`
 - Compatible with VideoHelperSuite (VHS)
-
-## Reference
-
-This pack follows the **Sequential Batcher** pattern (list iteration). Related packs:
-
-| Pack | Use case | Repo |
-|------|----------|------|
-| **ControlFlowUtils** | Loop Open / Loop Close | [VykosX/ControlFlowUtils](https://github.com/VykosX/ControlFlowUtils) |
-| **Inspire Pack** | Foreach / list iteration | [ltdrdata/ComfyUI-Inspire-Pack](https://github.com/ltdrdata/ComfyUI-Inspire-Pack) |
-| **Sequential Batcher** | Video/batch loops (Image Batch To List, List To Batch) | [Meisoftcoltd/ComfyUI-Sequential-Batcher](https://github.com/Meisoftcoltd/ComfyUI-Sequential-Batcher) |

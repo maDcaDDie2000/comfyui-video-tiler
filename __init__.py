@@ -14,8 +14,8 @@ NODE_CLASS_MAPPINGS = {
     "ReferenceTileSlice": ReferenceTileSlice,
 }
 NODE_DISPLAY_NAME_MAPPINGS = {
-    "VideoTileSlice": "Variable Tile Size",
-    "VideoTileSliceFixed": "Fixed Tile Size",
+    "VideoTileSlice": "Video Tile Slicer (var. size)",
+    "VideoTileSliceFixed": "Video Tile Slicer (fixed size)",
     "VideoTileMerge": "Video Tile Merge",
     "GetTile": "Get Tile",
     "ReferenceTileSlice": "Reference Tile Slice",
