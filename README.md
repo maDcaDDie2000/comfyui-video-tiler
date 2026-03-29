@@ -4,6 +4,8 @@ Memory-efficient video/image tiling for ComfyUI with overlap tiles, gaps, and fe
 
 Two layout modes: a **grid / gap / seam** slicer (variable tile sizes) and a **fixed tile size** slicer with fractional overlap and traversal patterns. **Video Tile Merge** reconstructs the frame from either slicer using the same `tile_config` you got at slice time.
 
+This pack is **intended for use with** and has been **tested on** **LTX 2.3** workflows. Other models or node stacks may work, but they are not the main focus.
+
 Tiling reduces *per-step* memory versus full-frame processing, but end-to-end workflows can still be **heavy on RAM and VRAM**, strongly depending on **how long the clip is** (batch / frame count) and **how large each frame is** (resolution and channel layout). Use the slicers’ `memory_estimate` as a rough guide, not a guarantee.
 
 This was vibe coded for personal use. It is not actively maintained, and issues or pull requests may not be addressed. Feel free to use it, but please do so at your own discretion.
@@ -127,5 +129,6 @@ Slicer → Merge (connect `tiles` and `tile_config`).
 
 ## Compatibility
 
+- **LTX 2.3** — primary target; development and testing assume this stack
 - Standard ComfyUI **IMAGE** tensors `[B, H, W, C]`
 - Compatible with VideoHelperSuite (VHS)
