@@ -170,7 +170,7 @@ def tile_layout_label_string(
         f"Overlap ext: {overlap_extension_x}x{overlap_extension_y}",
         f"Multiple: {multiple}",
         f"Total tiles: {len(tiles)}",
-        f"Feather: set on Video Tile Merge",
+        f"Feather: Video Tile Merge — pixels on seam tiles",
     ]
     if ov_h:
         lines.append(f"Overlap H: {ov_h.w}x{ov_h.h}")

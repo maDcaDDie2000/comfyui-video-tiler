@@ -13,7 +13,7 @@ This was vibe coded for personal use. It is not actively maintained, and issues 
 ## Features
 
 - **Video Tile Slicer (var. size)** – Grid layout: explicit tile counts, gaps, seam tiles, per-axis overlap extension (feather/blend is on **Video Tile Merge**)
-- **Video Tile Slicer (fixed size)** – Constant tile size, fractional overlap, traversal patterns (edge **`blur_fraction`** is on **Video Tile Merge**)
+- **Video Tile Slicer (fixed size)** – Constant tile size, fractional overlap, traversal patterns; **feather** (as fraction of tile size) is on **Video Tile Merge**
 - **Dual visualization** – **2-frame** IMAGE batch: (1) bordered overview + info box, (2) traversal **start→end color gradient** (filled). Same gradient style for both slicers; no feather preview (adjust merge instead)
 - **`layout_label`** – One string: human-readable layout **plus** combined memory estimates (each line notes **VRAM** vs **RAM** where relevant)
 - **Multiple-of-X** – Dimensions snapped to your multiple (e.g. 16, 32 for video models)
@@ -66,22 +66,23 @@ Same output **socket types** as **Video Tile Slicer (var. size)**, but layout is
 | `overlap` | `1/8` … `1/2` (fraction of shorter tile side) |
 | `pattern` | `row`, `column`, `spiral`, `double_spiral` |
 
-**Outputs:** Same sockets as **Video Tile Slicer (var. size)**. `tile_config` is **v5** (geometry + overlap stride, **no** blur in the tuple). Changing **Video Tile Merge** `blur_fraction` does not require re-slicing.
+**Outputs:** Same sockets as **Video Tile Slicer (var. size)**. `tile_config` is **v5** (geometry + overlap stride only). Changing **Video Tile Merge** `feather` does not require re-slicing.
 
 Saved workflows with an older **v3** `tile_config` still merge: legacy blur baked in the tuple is used; new slices emit **v5**.
 
 ### Video Tile Merge
 
-Reconstructs the full image/video from processed tiles. **`tile_config`** carries layout only; **feather** (grid / seam tiles) and **`blur_fraction`** (fixed-size overlap weights) are set here so you can tune blending **after** expensive tile work without invalidating the slicer cache.
+Reconstructs the full image/video from processed tiles. **`tile_config`** is geometry only; a single **`feather`** on the merge node controls blending after expensive steps (keeps slicer cache stable).
 
 | Input | Description |
 |-------|-------------|
 | `tile_config` | From either slicer (**v4** grid or **v5** fixed; legacy **v3** still supported) |
 | `tiles` | Processed tiles (same list order as slice) |
-| `feather` | Pixel feather for grid **overlap_h / overlap_v / overlap_corner** tiles (ignored for fixed **v5**/ **v3**) |
-| `blur_fraction` | 0–1 scale of overlap used as feather strip on **fixed** layouts (**v5** live; **v3** ignores and uses baked blur) |
+| `feather` | **Grid (v4):** feather in **pixels** on seam tiles (`overlap_h` / `overlap_v` / `overlap_corner`). **Fixed (v5):** **0–1 fraction of tile width/height** per axis for the internal-edge ramp (capped by stride overlap). Values **> 1** are treated as `min(1, feather/64)` for compatibility (e.g. **32 ≈ 0.5**). **v3** fixed: feather strip is still read from the old tuple (merge `feather` ignored). |
 
-**Output:** merged `IMAGE`. Grid (**v4**) uses seam/corner feather rules with **`feather`**. Fixed (**v5**) uses per-tile weights from **`blur_fraction`** and overlap geometry.
+**Output:** merged `IMAGE`. Both modes use **painter-style “over”** with a **linear alpha** on the **top** layer only: the upper layer is **fully opaque (100%)** in its interior; at internal edges the alpha ramps toward **0** so you see the **layer below** (not a symmetric blur between two equal weights). **Grid:** normals are drawn first (order), then seam tiles on top with pixel **`feather`** controlling ramp width. **Fixed:** tiles are drawn in **traversal order** (slicer `order`); later tiles are on top; **`feather`** sets ramp width (fraction of tile size on v5).
+
+**Wiring:** Slicer `tiles` → your processing → Merge `tiles`. Same slicer `tile_config` → Merge `tile_config`. Tune **`feather`** on the merge node.
 
 ### Reference Tile Slice
 
@@ -105,7 +106,7 @@ Returns **one** tile by index for manual wiring or external loops.
 
 Slice nodes emit `tiles` as a **list**. ComfyUI can run downstream nodes **once per tile** when wired in list context.
 
-**Wiring:** Slicer `tiles` → your processing → Merge `tiles`. Same slicer `tile_config` → Merge `tile_config`. Set **`feather`** / **`blur_fraction`** on the merge node.
+**Wiring:** Slicer `tiles` → your processing → Merge `tiles`. Same slicer `tile_config` → Merge `tile_config`. Tune **`feather`** on the merge node (`pixels` vs `fraction`; see merge table above).
 
 No custom loop nodes required; processing runs one tile at a time (VRAM-friendly).
 

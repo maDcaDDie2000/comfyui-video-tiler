@@ -94,20 +94,25 @@ def order_grid_cells(
     return double_spiral_indices(n_rows, n_cols)
 
 
-def compute_fixed_blur(
+def compute_fixed_feather_strips(
+    tile_w: int,
+    tile_h: int,
     overlap_x: int,
     overlap_y: int,
     multiple: int,
-    blur_fraction: float,
+    feather_fraction: float,
 ) -> tuple[int, int]:
-    """Feather strip per axis for merge; snapped to multiple (same rules as former in-layout blur)."""
+    """
+    Pixel width of feather on internal edges for fixed layout.
+    feather_fraction is 0–1 of full tile_w / tile_h per axis, capped by stride overlap, snapped to multiple.
+    """
     m = max(1, min(64, multiple))
-    bf = max(0.0, min(1.0, blur_fraction))
-    raw_blur_x = int(overlap_x * bf)
-    raw_blur_y = int(overlap_y * bf)
-    blur_x = min(overlap_x, _snap_to_multiple(raw_blur_x, m)) if overlap_x > 0 else 0
-    blur_y = min(overlap_y, _snap_to_multiple(raw_blur_y, m)) if overlap_y > 0 else 0
-    return blur_x, blur_y
+    f = max(0.0, min(1.0, feather_fraction))
+    raw_x = int(tile_w * f)
+    raw_y = int(tile_h * f)
+    bx = min(overlap_x, _snap_to_multiple(raw_x, m)) if overlap_x > 0 else 0
+    by = min(overlap_y, _snap_to_multiple(raw_y, m)) if overlap_y > 0 else 0
+    return bx, by
 
 
 def compute_fixed_layout(
@@ -122,7 +127,7 @@ def compute_fixed_layout(
 ) -> tuple[list[TileSpec], tuple]:
     """
     overlap = fraction of tile_w / tile_h per axis from overlap_numer/overlap_denom, capped at half tile.
-    Edge blur is applied in Video Tile Merge (blur_fraction), not stored in TILE_CONFIG.
+    Feather is applied in Video Tile Merge (fraction of tile size), not stored in TILE_CONFIG.
     """
     m = max(1, min(64, multiple))
     tile_w = _snap_to_multiple(max(m, tile_w_in), m)
@@ -213,7 +218,7 @@ def fixed_layout_label_string(
         f"Overlap: {overlap_x}x{overlap_y}",
         f"Pattern: {pattern}",
         f"Total tiles: {n_tiles}",
-        f"Blur: set on Video Tile Merge (blur_fraction)",
+        f"Feather: set on Video Tile Merge (fraction of tile W/H)",
     ]
     return "\n".join(lines)
 

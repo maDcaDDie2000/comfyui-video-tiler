@@ -1,20 +1,38 @@
 """
 Video Tile Merge node - reconstructs video from processed tiles.
-Uses shared output tensor, feather blending for overlaps. No duplicate storage.
-Feather (grid) and blur_fraction (fixed) are merge inputs so slicer output stays cache-stable.
+Uses shared output tensor. Feathering is **linear alpha** on the **top** layer only: opaque (1)
+in the tile interior, ramping toward 0 at internal edges so the **underlying** composite shows through.
+Not symmetric “blur” / averaging in the overlap core.
+
+Single **feather** (not in TILE_CONFIG):
+  - **Grid** (v1/v2/v4): seam overlap tiles composited **over** normals; **feather** = px width of
+    linear alpha ramp on those seam tiles (edges toward image border stay opaque).
+  - **Fixed** (v3/v5): tiles painted in **traversal order** (higher `order` on top). Same linear alpha
+    at internal edges. **v5**: **0–1** = fraction of tile W/H for strip width (capped by overlap);
+    **> 1** ⇒ min(1, feather/64). **v3**: strip px from tuple; merge **feather** ignored.
 """
 
 import torch
 
-from .fixed_layout import compute_fixed_blur
+from .fixed_layout import compute_fixed_feather_strips
 from .tile_config import parse_tile_config
+
+
+def _feather_as_fixed_fraction(feather: float) -> float:
+    """0–1 uses literal fraction of tile size; >1 maps feather/64 for one-knob workflows (e.g. 32 → 0.5)."""
+    if feather <= 1.0:
+        return max(0.0, min(1.0, feather))
+    return max(0.0, min(1.0, feather / 64.0))
 
 
 def _feather_mask(
     w: int, h: int, feather: float,
     x: int, y: int, img_width: int, img_height: int,
 ) -> torch.Tensor:
-    """Create feather mask: 1 in center, falloff at edges. No feather on edges touching image border. Shape (h, w)."""
+    """
+    Top-layer alpha for grid **seam** tiles: 1 in the interior, linear ramps toward 0 at edges that
+    border other content (not at the outer image boundary). Shape (h, w).
+    """
     if feather <= 0:
         return torch.ones((h, w), dtype=torch.float32)
 
@@ -29,8 +47,7 @@ def _feather_mask(
     top = torch.ones((h, w), dtype=torch.float32) if y == 0 else torch.clamp(yy * (h / feather_h), 0, 1)
     bottom = torch.ones((h, w), dtype=torch.float32) if y + h == img_height else torch.clamp((1 - yy) * (h / feather_h), 0, 1)
 
-    mask = torch.minimum(torch.minimum(left, right), torch.minimum(top, bottom))
-    return mask
+    return torch.minimum(torch.minimum(left, right), torch.minimum(top, bottom))
 
 
 def _normalize_tile(t):
@@ -49,52 +66,57 @@ def _normalize_tile(t):
     return t
 
 
-def _fixed_tile_weight_mask(
+def _fixed_tile_top_alpha(
     w: int, h: int, x: int, y: int,
     img_w: int, img_h: int,
-    blur_x: int, blur_y: int,
+    feather_x: int, feather_y: int,
     device: torch.device,
     dtype: torch.dtype,
 ) -> torch.Tensor:
-    """Order-independent feather weights: internal edges only, taper in blur strips."""
+    """
+    Alpha of the **current** (top) fixed tile: 1 inward from internal edges, linear ramp to 0 at the
+    tile border where it meets already-painted pixels (same geometry as former weight mask, but used
+    for `dst = dst * (1 - a) + src * a` so lower layers show through only in the ramp).
+    """
     ly = torch.arange(h, device=device, dtype=torch.float32).view(-1, 1).expand(h, w)
     lx = torch.arange(w, device=device, dtype=torch.float32).view(1, -1).expand(h, w)
     m = torch.ones((h, w), device=device, dtype=torch.float32)
-    if x > 0 and blur_x > 0:
-        m *= torch.where(lx < blur_x, lx / blur_x, torch.ones_like(m))
-    if y > 0 and blur_y > 0:
-        m *= torch.where(ly < blur_y, ly / blur_y, torch.ones_like(m))
-    if x + w < img_w and blur_x > 0:
+    if x > 0 and feather_x > 0:
+        m *= torch.where(lx < feather_x, lx / feather_x, torch.ones_like(m))
+    if y > 0 and feather_y > 0:
+        m *= torch.where(ly < feather_y, ly / feather_y, torch.ones_like(m))
+    if x + w < img_w and feather_x > 0:
         d = (w - 1) - lx
-        m *= torch.where(d < blur_x, d / blur_x, torch.ones_like(m))
-    if y + h < img_h and blur_y > 0:
+        m *= torch.where(d < feather_x, d / feather_x, torch.ones_like(m))
+    if y + h < img_h and feather_y > 0:
         d = (h - 1) - ly
-        m *= torch.where(d < blur_y, d / blur_y, torch.ones_like(m))
+        m *= torch.where(d < feather_y, d / feather_y, torch.ones_like(m))
     return m
 
 
 def merge_fixed_grid_tiles(
     tiles: list[torch.Tensor],
     config_tuple: tuple,
-    blur_fraction: float,
+    feather: float,
     device: torch.device | None = None,
 ) -> torch.Tensor:
-    """Fixed tile layout: distance-weighted blend. v5 blur from merge; v3 legacy blur in tuple."""
+    """Fixed layout: paint tiles in traversal order, each composited over with linear alpha (feather toward below)."""
     v = config_tuple[0]
     if v == 5:
         (
             _ver,
             width,
             height,
-            _tw,
-            _th,
+            tw,
+            th,
             overlap_x,
             overlap_y,
             mult,
             _pattern_id,
             _tiles_data,
         ) = config_tuple
-        bx, by = compute_fixed_blur(overlap_x, overlap_y, mult, blur_fraction)
+        frac = _feather_as_fixed_fraction(feather)
+        bx, by = compute_fixed_feather_strips(tw, th, overlap_x, overlap_y, mult, frac)
     elif v == 3:
         (
             _ver,
@@ -127,36 +149,36 @@ def merge_fixed_grid_tiles(
         dev = first.device
 
     _, _, _, tile_specs = parse_tile_config(config_tuple)
-    acc = torch.zeros((B, height, width, C), dtype=first.dtype, device=dev)
-    wsum = torch.zeros((B, height, width), dtype=first.dtype, device=dev)
+    output = torch.zeros((B, height, width, C), dtype=first.dtype, device=dev)
     bx_u, by_u = max(0, int(bx)), max(0, int(by))
-    for idx, spec in enumerate(tile_specs):
-        if idx >= len(tiles_list):
+
+    sorted_pairs = sorted(enumerate(tile_specs), key=lambda it: it[1].order)
+    for i, (orig_idx, spec) in enumerate(sorted_pairs):
+        if orig_idx >= len(tiles_list):
             break
-        tile = tiles_list[idx].to(dev)
+        tile = tiles_list[orig_idx].to(dev)
         x, y, w, h = spec.x, spec.y, spec.w, spec.h
-        mask = _fixed_tile_weight_mask(w, h, x, y, width, height, bx_u, by_u, dev, first.dtype)
-        mask_b = mask.reshape(1, h, w, 1)
-        acc[:, y : y + h, x : x + w, :] += tile * mask_b
-        wsum[:, y : y + h, x : x + w] += mask
-    wsum = wsum.clamp(min=torch.finfo(first.dtype).eps)
-    return acc / wsum.unsqueeze(-1)
+        if i == 0:
+            output[:, y : y + h, x : x + w, :] = tile
+            continue
+        alpha = _fixed_tile_top_alpha(w, h, x, y, width, height, bx_u, by_u, dev, first.dtype)
+        a = alpha.reshape(1, h, w, 1)
+        region = output[:, y : y + h, x : x + w, :]
+        output[:, y : y + h, x : x + w, :] = region * (1.0 - a) + tile * a
+
+    return output
 
 
 def merge_tiles(
     tiles: list[torch.Tensor],
     config_tuple: tuple,
     feather: float,
-    blur_fraction: float,
     device: torch.device | None = None,
 ) -> torch.Tensor:
-    """
-    Merge processed tiles into output. Writes into preallocated tensor.
-    Overlap tiles are feathered on top of normal tiles (grid). Feather from merge input.
-    """
+    """Merge: grid uses over + alpha on seam tiles; fixed uses traversal order + same alpha model."""
     ver = config_tuple[0]
     if ver in (3, 5):
-        return merge_fixed_grid_tiles(tiles, config_tuple, blur_fraction, device=device)
+        return merge_fixed_grid_tiles(tiles, config_tuple, feather, device=device)
     width, height, _multiple, tile_specs = parse_tile_config(config_tuple)
 
     tiles_list = [_normalize_tile(t) for t in tiles]
@@ -176,28 +198,27 @@ def merge_tiles(
 
     output = torch.zeros((B, height, width, C), dtype=first.dtype, device=device)
 
-    sorted_specs = sorted(tile_specs, key=lambda t: t.order)
-
-    for idx, spec in enumerate(sorted_specs):
-        if idx >= len(tiles_list):
+    for orig_idx, spec in sorted(enumerate(tile_specs), key=lambda it: it[1].order):
+        if orig_idx >= len(tiles_list):
             break
-        tile = tiles_list[idx].to(device)
+        tile = tiles_list[orig_idx].to(device)
         x, y, w, h = spec.x, spec.y, spec.w, spec.h
 
         if spec.type == "normal":
             output[:, y : y + h, x : x + w, :] = tile
         else:
-            mask = _feather_mask(w, h, feather, x, y, width, height).to(tile.device)
-            mask = mask.reshape(1, h, w, 1)
-            existing = output[:, y : y + h, x : x + w, :]
-            blended = existing * (1 - mask) + tile * mask
-            output[:, y : y + h, x : x + w, :] = blended
+            alpha = _feather_mask(w, h, feather, x, y, width, height).to(tile.device)
+            a = alpha.reshape(1, h, w, 1)
+            region = output[:, y : y + h, x : x + w, :]
+            output[:, y : y + h, x : x + w, :] = region * (1.0 - a) + tile * a
 
     return output
 
 
 class VideoTileMerge:
-    """Merge processed tiles. Grid seam feather and fixed blur_fraction are set here (not in TILE_CONFIG)."""
+    """
+    **feather**: grid ⇒ px alpha ramp on seam tiles (over composite). Fixed ⇒ fraction of tile W/H for ramp on v5.
+    """
 
     @classmethod
     def INPUT_TYPES(cls):
@@ -207,11 +228,12 @@ class VideoTileMerge:
                 "tiles": ("IMAGE",),
                 "feather": (
                     "FLOAT",
-                    {"default": 64.0, "min": 0.0, "max": 512.0, "step": 1.0},
-                ),
-                "blur_fraction": (
-                    "FLOAT",
-                    {"default": 0.5, "min": 0.0, "max": 1.0, "step": 0.05},
+                    {
+                        "default": 32.0,
+                        "min": 0.0,
+                        "max": 512.0,
+                        "step": 0.05,
+                    },
                 ),
             },
         }
@@ -222,7 +244,7 @@ class VideoTileMerge:
     FUNCTION = "merge"
     CATEGORY = "Video Tiler"
 
-    def merge(self, tile_config, tiles, feather, blur_fraction):
+    def merge(self, tile_config, tiles, feather):
         if isinstance(tile_config, (list, tuple)) and len(tile_config) > 0:
             tile_config = tile_config[0]
         if isinstance(tiles, (list, tuple)):
@@ -230,5 +252,5 @@ class VideoTileMerge:
         else:
             tiles_list = [tiles]
         print(f"[Video Tiler] Merging {len(tiles_list)} tiles → single IMAGE batch")
-        result = merge_tiles(tiles_list, tile_config, feather, blur_fraction)
+        result = merge_tiles(tiles_list, tile_config, feather)
         return (result,)
