@@ -19,9 +19,18 @@ from .fixed_layout import compute_fixed_feather_strips
 from .tile_config import parse_tile_config
 
 
+def _scalar_float(v) -> float:
+    """ComfyUI may wrap FLOAT widgets in list/tuple (e.g. list-iteration / batch execution)."""
+    while isinstance(v, (list, tuple)):
+        if len(v) == 0:
+            return 0.0
+        v = v[0]
+    return float(v)
+
+
 def _strip_fraction(feather: float) -> float:
     """Feather knob: fraction of local tile width/height for ramp extent, max 50%."""
-    return max(0.0, min(0.5, float(feather)))
+    return max(0.0, min(0.5, _scalar_float(feather)))
 
 
 def _feather_mask(
@@ -255,6 +264,7 @@ class VideoTileMerge:
     def merge(self, tile_config, tiles, feather):
         if isinstance(tile_config, (list, tuple)) and len(tile_config) > 0:
             tile_config = tile_config[0]
+        feather = _scalar_float(feather)
         if isinstance(tiles, (list, tuple)):
             tiles_list = list(tiles)
         else:
