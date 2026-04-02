@@ -1,13 +1,14 @@
 """
 Video Tile Slice node - splits video into tiles using views (no copy).
+Feathering is applied in Video Tile Merge — TILE_CONFIG is geometry only (cache-friendly).
 """
 
 import numpy as np
 import torch
 
+from .fixed_layout import order_gradient_rgb
 from .layout import TileSpec
 from .tile_config import create_tile_config
-
 
 BYTES_PER_PIXEL = 16  # float32, 4 channels (IMAGE)
 
@@ -16,23 +17,19 @@ def estimate_peak_memory(
     width: int, height: int, tiles: list[TileSpec], batch_size: int = 1,
 ) -> str:
     """
-    Rough estimate of peak RAM/VRAM for VAE encode (per tile), VAE decode (per tile), and merge.
-    Assumes float32, 4 channels. VAE latent: 8x downscale, 4 channels.
+    Rough peak memory hints. VAE stages are usually VRAM on GPU; merge can be VRAM (CUDA) or RAM (CPU).
     """
     B = max(1, batch_size)
     total_tiles_pixels = sum(t.w * t.h for t in tiles)
     largest_tile_pixels = max(t.w * t.h for t in tiles) if tiles else 0
 
-    # Merge: output buffer + all tiles held (ComfyUI collects before merge)
     merge_output = B * width * height * BYTES_PER_PIXEL
     merge_tiles = total_tiles_pixels * B * BYTES_PER_PIXEL
     merge_peak = merge_output + merge_tiles
 
-    # VAE encode: input image + latent output + intermediate. ~2x input + latent for rough estimate.
-    latent_scale = 8  # typical 8x downscale
-    vae_encode_peak = B * largest_tile_pixels * BYTES_PER_PIXEL * 2  # input + output/intermediate
+    latent_scale = 8
+    vae_encode_peak = B * largest_tile_pixels * BYTES_PER_PIXEL * 2
 
-    # VAE decode: latent input + image output
     vae_decode_peak = (
         B * (largest_tile_pixels // (latent_scale * latent_scale)) * BYTES_PER_PIXEL
         + B * largest_tile_pixels * BYTES_PER_PIXEL
@@ -44,11 +41,15 @@ def estimate_peak_memory(
         return f"{b / 1e6:.0f} MB"
 
     return (
-        f"Est. peak:\n"
-        f"  VAE encode/tile: {_fmt(vae_encode_peak)}\n"
-        f"  VAE decode/tile: {_fmt(vae_decode_peak)}\n"
-        f"  Merge: {_fmt(merge_peak)} (output + {len(tiles)} tiles)"
+        f"Memory estimates (approx.):\n"
+        f"  [typically VRAM] VAE encode / tile: {_fmt(vae_encode_peak)}\n"
+        f"  [typically VRAM] VAE decode / tile: {_fmt(vae_decode_peak)}\n"
+        f"  [VRAM if merge on CUDA, else RAM] Merge: {_fmt(merge_peak)} (output + {len(tiles)} tiles)"
     )
+
+
+def combine_layout_and_memory(layout_text: str, memory_text: str) -> str:
+    return f"{layout_text}\n\n---\n{memory_text}"
 
 
 def slice_tiles_as_views(images: torch.Tensor, tiles: list[TileSpec]) -> list[torch.Tensor]:
@@ -78,28 +79,27 @@ def _get_font(draw, width: int):
     return ImageFont.load_default()
 
 
-def _tile_color(t: TileSpec) -> tuple[float, float, float]:
-    """RGB 0-1: green normal, orange H/V, magenta corner."""
-    if t.type == "normal":
-        return (0, 0.8, 0)
-    if t.type == "overlap_h" or t.type == "overlap_v":
-        return (1.0, 0.5, 0)
-    return (1.0, 0, 0.8)
+def _tile_rank_by_traversal(tiles: list[TileSpec]) -> dict[int, int]:
+    indices = sorted(range(len(tiles)), key=lambda i: (tiles[i].order, tiles[i].y, tiles[i].x))
+    return {idx: rank for rank, idx in enumerate(indices)}
 
 
-def create_visualization_labels(
-    width: int, height: int, tiles: list[TileSpec],
+def create_grid_traversal_viz_labels(
+    width: int,
+    height: int,
+    tiles: list[TileSpec],
 ) -> np.ndarray:
-    """Viz 1: Borders only, tile number in all four corners. Green/orange/magenta by type."""
-    from PIL import Image, ImageDraw, ImageFont
+    """Borders + indices; fill color follows traversal order (same gradient idea as fixed slicer)."""
+    from PIL import Image, ImageDraw
 
+    n = len(tiles)
+    rank_of = _tile_rank_by_traversal(tiles)
     img = np.ones((height, width, 3), dtype=np.float32) * 0.95
-
-    for idx, t in enumerate(tiles):
+    for ti, t in enumerate(tiles):
         x1, y1 = t.x, t.y
         x2, y2 = t.x + t.w, t.y + t.h
-        color = list(_tile_color(t))
-        # Borders only
+        rk = rank_of[ti]
+        color = list(order_gradient_rgb(rk, max(n, 1)))
         img[y1:y2, x1:x1 + 2, :] = color
         img[y1:y2, x2 - 2 : x2, :] = color
         img[y1 : y1 + 2, x1:x2, :] = color
@@ -108,58 +108,37 @@ def create_visualization_labels(
     pil_img = Image.fromarray((img * 255).astype(np.uint8))
     draw = ImageDraw.Draw(pil_img)
     font = _get_font(draw, width)
-
-    for idx, t in enumerate(tiles):
+    for ti, t in enumerate(tiles):
         x1, y1 = t.x, t.y
         x2, y2 = t.x + t.w, t.y + t.h
-        label = f"{idx:02d}"
-        rgb = tuple(int(c * 255) for c in _tile_color(t))
+        rk = rank_of[ti]
+        label = f"{rk:02d}"
+        rgb = tuple(int(c * 255) for c in order_gradient_rgb(rk, max(n, 1)))
         pad = 4
         for (lx, ly) in [(x1 + pad, y1 + pad), (x2 - 24, y1 + pad), (x1 + pad, y2 - 16), (x2 - 24, y2 - 16)]:
             draw.text((lx, ly), label, fill=rgb, font=font)
-
     return np.array(pil_img).astype(np.float32) / 255.0
 
 
-def create_visualization_types(
-    width: int, height: int, tiles: list[TileSpec], feather: float,
+def create_grid_traversal_viz_fill(
+    width: int,
+    height: int,
+    tiles: list[TileSpec],
 ) -> np.ndarray:
-    """Viz 2: Tile type as topmost color (green/orange/magenta). Feather regions show gradient."""
-    # Sort by order so topmost wins
-    sorted_tiles = sorted(tiles, key=lambda t: t.order)
+    """Solid fill per tile: later traversal rank paints over overlaps (gradient hues)."""
+    n = len(tiles)
+    if n == 0:
+        return np.ones((height, width, 3), dtype=np.float32) * 0.95
+    rank_of = _tile_rank_by_traversal(tiles)
     img = np.ones((height, width, 3), dtype=np.float32) * 0.95
-
-    fe = max(1, int(feather))
-
-    for t in sorted_tiles:
+    order_paint = sorted(range(n), key=lambda ti: rank_of[ti])
+    for ti in order_paint:
+        t = tiles[ti]
         x1, y1 = t.x, t.y
         x2, y2 = t.x + t.w, t.y + t.h
-        color = np.array(_tile_color(t), dtype=np.float32)
-
-        if t.type == "normal":
-            img[y1:y2, x1:x2, :] = color
-        else:
-            # Overlap: solid in center, gradient in feather toward adjacent tile color
-            # H/V overlap borders green → gradient orange↔green
-            # Corner overlaps border orange → gradient magenta↔orange
-            h, w = y2 - y1, x2 - x1
-            yy = np.linspace(0, 1, h)
-            xx = np.linspace(0, 1, w)
-            yy, xx = np.meshgrid(yy, xx, indexing="ij")
-            left = np.clip(xx * (w / fe), 0, 1) if x1 > 0 else np.ones((h, w))
-            right = np.clip((1 - xx) * (w / fe), 0, 1) if x2 < width else np.ones((h, w))
-            top = np.clip(yy * (h / fe), 0, 1) if y1 > 0 else np.ones((h, w))
-            bottom = np.clip((1 - yy) * (h / fe), 0, 1) if y2 < height else np.ones((h, w))
-            # Linear falloff (no ease-in/ease-out) to avoid visible seams
-            mask = np.minimum(np.minimum(left, right), np.minimum(top, bottom))
-            mask = np.expand_dims(mask, axis=-1)
-            if t.type == "overlap_corner":
-                edge_color = np.array([1.0, 0.5, 0.0], dtype=np.float32)  # orange
-            else:
-                edge_color = np.array([0, 0.8, 0], dtype=np.float32)  # green
-            blended = color * mask + edge_color * (1 - mask)
-            img[y1:y2, x1:x2, :] = blended
-
+        rk = rank_of[ti]
+        color = np.array(order_gradient_rgb(rk, max(n, 1)), dtype=np.float32)
+        img[y1:y2, x1:x2, :] = color
     return img
 
 
@@ -167,7 +146,6 @@ def tile_layout_label_string(
     width: int,
     height: int,
     tiles: list[TileSpec],
-    feather: float,
     tiles_x: int,
     tiles_y: int,
     multiple: int,
@@ -190,9 +168,9 @@ def tile_layout_label_string(
         f"Normal tile: {tile_w}x{tile_h}",
         f"Gap: {gap_x}x{gap_y}",
         f"Overlap ext: {overlap_extension_x}x{overlap_extension_y}",
-        f"Feather: {feather}",
         f"Multiple: {multiple}",
         f"Total tiles: {len(tiles)}",
+        f"Feather: set on Video Tile Merge",
     ]
     if ov_h:
         lines.append(f"Overlap H: {ov_h.w}x{ov_h.h}")
@@ -207,7 +185,6 @@ def create_visualization(
     width: int,
     height: int,
     tiles: list[TileSpec],
-    feather: float,
     tiles_x: int,
     tiles_y: int,
     multiple: int,
@@ -215,23 +192,23 @@ def create_visualization(
     overlap_extension_y: int,
 ) -> torch.Tensor:
     """
-    Create two visualization images as batch:
-    [0] Borders only, tile labels in 4 corners (green/orange/magenta by type)
-    [1] Tile type colors (topmost) with feather gradient
+    Two visualization images as batch:
+    [0] Borders + traversal-order gradient (labels)
+    [1] Filled regions, traversal gradient (later order on top)
     """
-    from PIL import Image, ImageDraw, ImageFont
+    from PIL import Image, ImageDraw
 
-    img1 = create_visualization_labels(width, height, tiles)
-    img2 = create_visualization_types(width, height, tiles, feather)
+    img1_arr = create_grid_traversal_viz_labels(width, height, tiles)
+    img2_arr = create_grid_traversal_viz_fill(width, height, tiles)
 
     label = tile_layout_label_string(
-        width, height, tiles, feather,
+        width, height, tiles,
         tiles_x, tiles_y, multiple,
         overlap_extension_x, overlap_extension_y,
     )
     lines = label.split("\n")
 
-    pil1 = Image.fromarray((img1 * 255).astype(np.uint8))
+    pil1 = Image.fromarray((img1_arr * 255).astype(np.uint8))
     draw = ImageDraw.Draw(pil1)
     font = _get_font(draw, width)
     pad = 6
@@ -255,7 +232,7 @@ def create_visualization(
         draw.text((box_x + pad, box_y + pad + i * line_h), line, fill=(255, 255, 255), font=font)
     img1 = np.array(pil1).astype(np.float32) / 255.0
 
-    stacked = np.stack([img1, img2], axis=0).astype(np.float32)
+    stacked = np.stack([img1, img2_arr], axis=0).astype(np.float32)
     return torch.from_numpy(stacked)
 
 
@@ -272,13 +249,12 @@ class VideoTileSlice:
                 "multiple": ("INT", {"default": 32, "min": 1, "max": 64}),
                 "overlap_extension_x": ("INT", {"default": 128, "min": 0, "max": 4096}),
                 "overlap_extension_y": ("INT", {"default": 128, "min": 0, "max": 4096}),
-                "feather": ("FLOAT", {"default": 64.0, "min": 0.0, "max": 512.0}),
             },
         }
 
-    RETURN_TYPES = ("IMAGE", "TILE_CONFIG", "IMAGE", "INT", "STRING", "STRING")
-    RETURN_NAMES = ("tiles", "tile_config", "visualization", "tile_count", "memory_estimate", "layout_label")
-    OUTPUT_IS_LIST = (True, False, False, False, False, False)
+    RETURN_TYPES = ("IMAGE", "TILE_CONFIG", "IMAGE", "INT", "STRING")
+    RETURN_NAMES = ("tiles", "tile_config", "visualization", "tile_count", "layout_label")
+    OUTPUT_IS_LIST = (True, False, False, False, False)
     FUNCTION = "slice"
     CATEGORY = "Video Tiler"
 
@@ -290,7 +266,6 @@ class VideoTileSlice:
         multiple: int,
         overlap_extension_x: int,
         overlap_extension_y: int,
-        feather: float,
     ):
         B, H, W, C = images.shape
         batch_size = int(B)
@@ -302,12 +277,11 @@ class VideoTileSlice:
             multiple=multiple,
             overlap_extension_x=overlap_extension_x,
             overlap_extension_y=overlap_extension_y,
-            feather=feather,
         )
 
         tile_tensors = slice_tiles_as_views(images, tiles)
         viz = create_visualization(
-            W, H, tiles, feather,
+            W, H, tiles,
             tiles_x=tiles_x, tiles_y=tiles_y,
             multiple=multiple,
             overlap_extension_x=overlap_extension_x,
@@ -315,12 +289,13 @@ class VideoTileSlice:
         )
 
         mem_est = estimate_peak_memory(W, H, tiles, batch_size)
-        layout_label = tile_layout_label_string(
-            W, H, tiles, feather,
+        layout_core = tile_layout_label_string(
+            W, H, tiles,
             tiles_x, tiles_y, multiple,
             overlap_extension_x, overlap_extension_y,
         )
+        layout_full = combine_layout_and_memory(layout_core, mem_est)
         print(f"[Video Tiler] Slice: {W}x{H} → {len(tiles)} tiles ({tiles_x}x{tiles_y} grid)")
         print(mem_est)
 
-        return (tile_tensors, config_tuple, viz, len(tile_tensors), mem_est, layout_label)
+        return (tile_tensors, config_tuple, viz, len(tile_tensors), layout_full)

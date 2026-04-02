@@ -94,6 +94,22 @@ def order_grid_cells(
     return double_spiral_indices(n_rows, n_cols)
 
 
+def compute_fixed_blur(
+    overlap_x: int,
+    overlap_y: int,
+    multiple: int,
+    blur_fraction: float,
+) -> tuple[int, int]:
+    """Feather strip per axis for merge; snapped to multiple (same rules as former in-layout blur)."""
+    m = max(1, min(64, multiple))
+    bf = max(0.0, min(1.0, blur_fraction))
+    raw_blur_x = int(overlap_x * bf)
+    raw_blur_y = int(overlap_y * bf)
+    blur_x = min(overlap_x, _snap_to_multiple(raw_blur_x, m)) if overlap_x > 0 else 0
+    blur_y = min(overlap_y, _snap_to_multiple(raw_blur_y, m)) if overlap_y > 0 else 0
+    return blur_x, blur_y
+
+
 def compute_fixed_layout(
     width: int,
     height: int,
@@ -103,11 +119,10 @@ def compute_fixed_layout(
     overlap_numer: int,
     overlap_denom: int,
     pattern: Pattern,
-    blur_fraction: float,
 ) -> tuple[list[TileSpec], tuple]:
     """
     overlap = fraction of tile_w / tile_h per axis from overlap_numer/overlap_denom, capped at half tile.
-    blur strip = blur_fraction * overlap (per axis), snapped to multiple.
+    Edge blur is applied in Video Tile Merge (blur_fraction), not stored in TILE_CONFIG.
     """
     m = max(1, min(64, multiple))
     tile_w = _snap_to_multiple(max(m, tile_w_in), m)
@@ -144,12 +159,6 @@ def compute_fixed_layout(
             if w > 0 and h > 0:
                 tiles_ordered.append((x, y, w, h))
 
-    bf = max(0.0, min(1.0, blur_fraction))
-    raw_blur_x = int(overlap_x * bf)
-    raw_blur_y = int(overlap_y * bf)
-    blur_x = min(overlap_x, _snap_to_multiple(raw_blur_x, m)) if overlap_x > 0 else 0
-    blur_y = min(overlap_y, _snap_to_multiple(raw_blur_y, m)) if overlap_y > 0 else 0
-
     tile_specs: list[TileSpec] = []
     for i, (x, y, w, h) in enumerate(tiles_ordered):
         rc = pos_to_rc.get((y, x))
@@ -170,15 +179,14 @@ def compute_fixed_layout(
 
     pattern_id = {"row": 0, "column": 1, "spiral": 2, "double_spiral": 3}[pattern]
     config_tuple = (
-        3,
+        5,
         width,
         height,
         tile_w,
         tile_h,
         overlap_x,
         overlap_y,
-        blur_x,
-        blur_y,
+        m,
         pattern_id,
         tuple(
             (t.type, t.x, t.y, t.w, t.h, t.col, t.row, t.order)
@@ -195,8 +203,6 @@ def fixed_layout_label_string(
     tile_h: int,
     overlap_x: int,
     overlap_y: int,
-    blur_x: int,
-    blur_y: int,
     pattern: str,
     n_tiles: int,
 ) -> str:
@@ -205,9 +211,9 @@ def fixed_layout_label_string(
         f"Mode: fixed tile",
         f"Tile: {tile_w}x{tile_h}",
         f"Overlap: {overlap_x}x{overlap_y}",
-        f"Blur (feather): {blur_x}x{blur_y}",
         f"Pattern: {pattern}",
         f"Total tiles: {n_tiles}",
+        f"Blur: set on Video Tile Merge (blur_fraction)",
     ]
     return "\n".join(lines)
 

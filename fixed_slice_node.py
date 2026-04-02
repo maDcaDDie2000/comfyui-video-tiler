@@ -1,6 +1,6 @@
 """
 Fixed tile-size slicer with fractional overlap and traversal patterns.
-Uses TILE_CONFIG v3; merge with existing Video Tile Merge (weighted blend).
+TILE_CONFIG v5 — edge blur is set on Video Tile Merge only.
 """
 
 from __future__ import annotations
@@ -14,20 +14,20 @@ from .fixed_layout import (
     create_fixed_traversal_viz_labels,
     fixed_layout_label_string,
 )
-from .slice_node import estimate_peak_memory, slice_tiles_as_views, _get_font
+from .layout import TileSpec
+from .slice_node import combine_layout_and_memory, estimate_peak_memory, slice_tiles_as_views, _get_font
 
 
 def _build_fixed_visualization(
     width: int,
     height: int,
     tiles: list[TileSpec],
-    blur_max: float,
     info_lines: list[str],
 ) -> torch.Tensor:
     from PIL import Image, ImageDraw
 
     img1 = create_fixed_traversal_viz_labels(width, height, tiles)
-    img2 = create_fixed_traversal_viz_fill(width, height, tiles, blur_max)
+    img2 = create_fixed_traversal_viz_fill(width, height, tiles, 0.0)
     pil1 = Image.fromarray((img1 * 255).astype(np.uint8))
     draw = ImageDraw.Draw(pil1)
     font = _get_font(draw, width)
@@ -79,16 +79,12 @@ class VideoTileSliceFixed:
                     ["row", "column", "spiral", "double_spiral"],
                     {"default": "row"},
                 ),
-                "blur_fraction": (
-                    "FLOAT",
-                    {"default": 0.5, "min": 0.0, "max": 1.0, "step": 0.05},
-                ),
             },
         }
 
-    RETURN_TYPES = ("IMAGE", "TILE_CONFIG", "IMAGE", "INT", "STRING", "STRING")
-    RETURN_NAMES = ("tiles", "tile_config", "visualization", "tile_count", "memory_estimate", "layout_label")
-    OUTPUT_IS_LIST = (True, False, False, False, False, False)
+    RETURN_TYPES = ("IMAGE", "TILE_CONFIG", "IMAGE", "INT", "STRING")
+    RETURN_NAMES = ("tiles", "tile_config", "visualization", "tile_count", "layout_label")
+    OUTPUT_IS_LIST = (True, False, False, False, False)
     FUNCTION = "slice_fixed"
     CATEGORY = "Video Tiler"
 
@@ -100,7 +96,6 @@ class VideoTileSliceFixed:
         multiple: int,
         overlap: str,
         pattern: str,
-        blur_fraction: float,
     ):
         B, H, W, C = images.shape
         batch_size = int(B)
@@ -114,24 +109,22 @@ class VideoTileSliceFixed:
             on,
             od,
             pattern,  # type: ignore[arg-type]
-            blur_fraction,
         )
         tw = config_tuple[3]
         th = config_tuple[4]
         ox = config_tuple[5]
         oy = config_tuple[6]
-        bx = config_tuple[7]
-        by = config_tuple[8]
 
         tile_tensors = slice_tiles_as_views(images, tiles)
         mem_est = estimate_peak_memory(W, H, tiles, batch_size)
-        layout_label = fixed_layout_label_string(
-            W, H, tw, th, ox, oy, bx, by, pattern, len(tiles),
+        layout_core = fixed_layout_label_string(
+            W, H, tw, th, ox, oy, pattern, len(tiles),
         )
-        info_lines = layout_label.split("\n")
-        viz = _build_fixed_visualization(W, H, tiles, float(max(bx, by)), info_lines)
+        layout_full = combine_layout_and_memory(layout_core, mem_est)
+        info_lines = layout_core.split("\n")
+        viz = _build_fixed_visualization(W, H, tiles, info_lines)
 
         print(f"[Video Tiler] Fixed slice: {W}x{H} → {len(tiles)} tiles ({pattern})")
         print(mem_est)
 
-        return (tile_tensors, config_tuple, viz, len(tile_tensors), mem_est, layout_label)
+        return (tile_tensors, config_tuple, viz, len(tile_tensors), layout_full)

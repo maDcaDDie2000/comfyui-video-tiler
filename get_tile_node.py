@@ -14,7 +14,7 @@ def get_tile_by_index(
     tile_index: int,
 ) -> torch.Tensor:
     """Extract tile at index. Clamped to image bounds; contiguous for PIL compatibility."""
-    _, _, _, _, tile_specs = parse_tile_config(config_tuple)
+    _, _, _, tile_specs = parse_tile_config(config_tuple)
     tile_index = max(0, min(tile_index, len(tile_specs) - 1))
     spec = tile_specs[tile_index]
     _, H, W, _ = images.shape
@@ -51,7 +51,7 @@ class GetTile:
     CATEGORY = "Video Tiler"
 
     def get_tile(self, images: torch.Tensor, tile_config: tuple, tile_index: int):
-        _, _, _, _, tile_specs = parse_tile_config(tile_config)
+        _, _, _, tile_specs = parse_tile_config(tile_config)
         n = len(tile_specs)
         tile_index = max(0, min(tile_index, n - 1))
         tile = get_tile_by_index(images, tile_config, tile_index)

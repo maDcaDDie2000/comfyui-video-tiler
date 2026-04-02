@@ -2,7 +2,7 @@
 TILE_CONFIG - ComfyUI-friendly serializable config for tile layout.
 
 Passed from Slice node to Merge node. Contains only layout metadata (positions),
-no tensor data - minimal memory.
+no tensor data — no feather/blur (those are merge inputs so upstream stays cached).
 """
 
 from __future__ import annotations
@@ -20,13 +20,12 @@ def create_tile_config(
     multiple: int,
     overlap_extension_x: int,
     overlap_extension_y: int,
-    feather: float,
 ) -> tuple[list[TileSpec], tuple[Any, ...]]:
     """
     Create tile specs and serializable config tuple for ComfyUI.
 
     Returns: (tile_specs, config_tuple)
-    config_tuple is picklable and can be passed between nodes.
+    Grid layout version 4 — feather is set on Video Tile Merge only.
     """
     tiles = compute_layout(
         width=width,
@@ -38,9 +37,8 @@ def create_tile_config(
         overlap_extension_y=overlap_extension_y,
     )
 
-    # Serialize to tuple of primitives (ComfyUI workflow serialization)
     config_tuple = (
-        2,  # version
+        4,  # version: grid seams, no feather in tuple
         width,
         height,
         tiles_x,
@@ -48,7 +46,6 @@ def create_tile_config(
         multiple,
         overlap_extension_x,
         overlap_extension_y,
-        feather,
         tuple(
             (t.type, t.x, t.y, t.w, t.h, t.col, t.row, t.order)
             for t in tiles
@@ -57,12 +54,52 @@ def create_tile_config(
     return tiles, config_tuple
 
 
-def parse_tile_config(config_tuple: tuple[Any, ...]) -> tuple[int, int, int, float, list[TileSpec]]:
+def _tiles_from_data(tiles_data: tuple) -> list[TileSpec]:
+    return [
+        TileSpec(
+            type=t[0],
+            x=t[1], y=t[2], w=t[3], h=t[4],
+            col=t[5], row=t[6], order=t[7],
+        )
+        for t in tiles_data
+    ]
+
+
+def parse_tile_config(config_tuple: tuple[Any, ...]) -> tuple[int, int, int, list[TileSpec]]:
     """
-    Parse config tuple back to (width, height, multiple, feather, tile_specs).
-    v1–v2: grid seams. v3: fixed tiles; multiple=tile_w, feather=max blur for legacy callers.
+    Parse config tuple to (width, height, multiple, tile_specs).
+
+    v4: grid seams. v5: fixed tiles (blur from merge). v3: fixed with blur in tuple (legacy).
+    v1–v2: grid with legacy feather slot in tuple (ignored — use merge feather).
     """
     version = config_tuple[0]
+    if version == 5:
+        (
+            _v,
+            width,
+            height,
+            _tile_w,
+            _tile_h,
+            _ox,
+            _oy,
+            multiple,
+            _pattern_id,
+            tiles_data,
+        ) = config_tuple
+        return width, height, int(multiple), _tiles_from_data(tiles_data)
+    if version == 4:
+        (
+            _v,
+            width,
+            height,
+            _tiles_x,
+            _tiles_y,
+            multiple,
+            _oex,
+            _oey,
+            tiles_data,
+        ) = config_tuple
+        return width, height, int(multiple), _tiles_from_data(tiles_data)
     if version == 3:
         (
             _v,
@@ -72,31 +109,24 @@ def parse_tile_config(config_tuple: tuple[Any, ...]) -> tuple[int, int, int, flo
             _tile_h,
             _ox,
             _oy,
-            blur_x,
-            blur_y,
+            _blur_x,
+            _blur_y,
             _pattern_id,
             tiles_data,
         ) = config_tuple
-        tiles = [
-            TileSpec(
-                type=t[0],
-                x=t[1], y=t[2], w=t[3], h=t[4],
-                col=t[5], row=t[6], order=t[7],
-            )
-            for t in tiles_data
-        ]
-        return width, height, tile_w, float(max(blur_x, blur_y)), tiles
+        tiles = _tiles_from_data(tiles_data)
+        return width, height, int(tile_w), tiles
     if version >= 2:
         (
             _version,
             width,
             height,
-            tiles_x,
-            tiles_y,
+            _tiles_x,
+            _tiles_y,
             multiple,
             _overlap_x,
             _overlap_y,
-            feather,
+            _feather_legacy,
             tiles_data,
         ) = config_tuple
     else:
@@ -104,20 +134,12 @@ def parse_tile_config(config_tuple: tuple[Any, ...]) -> tuple[int, int, int, flo
             _version,
             width,
             height,
-            tiles_x,
-            tiles_y,
+            _tiles_x,
+            _tiles_y,
             multiple,
             _overlap_ext,
-            feather,
+            _feather_legacy,
             tiles_data,
         ) = config_tuple
 
-    tiles = [
-        TileSpec(
-            type=t[0],
-            x=t[1], y=t[2], w=t[3], h=t[4],
-            col=t[5], row=t[6], order=t[7],
-        )
-        for t in tiles_data
-    ]
-    return width, height, multiple, feather, tiles
+    return width, height, int(multiple), _tiles_from_data(tiles_data)
