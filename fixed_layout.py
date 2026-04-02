@@ -104,10 +104,11 @@ def compute_fixed_feather_strips(
 ) -> tuple[int, int]:
     """
     Pixel width of feather on internal edges for fixed layout.
-    feather_fraction is 0–1 of full tile_w / tile_h per axis, capped by stride overlap, snapped to multiple.
+    feather_fraction is a fraction of tile_w / tile_h per axis (oblong ⇒ different px on H vs V),
+    at most 0.5 (50%) per axis, then capped by stride overlap, snapped to multiple.
     """
     m = max(1, min(64, multiple))
-    f = max(0.0, min(1.0, feather_fraction))
+    f = max(0.0, min(0.5, feather_fraction))
     raw_x = int(tile_w * f)
     raw_y = int(tile_h * f)
     bx = min(overlap_x, _snap_to_multiple(raw_x, m)) if overlap_x > 0 else 0

@@ -4,12 +4,13 @@ Uses shared output tensor. Feathering is **linear alpha** on the **top** layer o
 in the tile interior, ramping toward 0 at internal edges so the **underlying** composite shows through.
 Not symmetric “blur” / averaging in the overlap core.
 
-Single **feather** (not in TILE_CONFIG):
-  - **Grid** (v1/v2/v4): seam overlap tiles composited **over** normals; **feather** = px width of
-    linear alpha ramp on those seam tiles (edges toward image border stay opaque).
-  - **Fixed** (v3/v5): tiles painted in **traversal order** (higher `order` on top). Same linear alpha
-    at internal edges. **v5**: **0–1** = fraction of tile W/H for strip width (capped by overlap);
-    **> 1** ⇒ min(1, feather/64). **v3**: strip px from tuple; merge **feather** ignored.
+Single **feather** (not in TILE_CONFIG), same rule everywhere:
+  **0–0.5** = fraction of this tile’s **width** for horizontal ramps and **height** for vertical ramps
+  (oblong seam tiles get a wider ramp in px on the long side). Capped at **50%** per axis. No pixel ring.
+
+  - **Grid** (v1/v2/v4): seam tiles composited **over** normals with that alpha model.
+  - **Fixed** (v3/v5): same at internal edges; strip px = fraction × tile_w / tile_h, then min(overlap),
+    snapped to multiple. **v3**: baked tuple strips; merge **feather** ignored.
 """
 
 import torch
@@ -18,11 +19,9 @@ from .fixed_layout import compute_fixed_feather_strips
 from .tile_config import parse_tile_config
 
 
-def _feather_as_fixed_fraction(feather: float) -> float:
-    """0–1 uses literal fraction of tile size; >1 maps feather/64 for one-knob workflows (e.g. 32 → 0.5)."""
-    if feather <= 1.0:
-        return max(0.0, min(1.0, feather))
-    return max(0.0, min(1.0, feather / 64.0))
+def _strip_fraction(feather: float) -> float:
+    """Feather knob: fraction of local tile width/height for ramp extent, max 50%."""
+    return max(0.0, min(0.5, float(feather)))
 
 
 def _feather_mask(
@@ -30,22 +29,32 @@ def _feather_mask(
     x: int, y: int, img_width: int, img_height: int,
 ) -> torch.Tensor:
     """
-    Top-layer alpha for grid **seam** tiles: 1 in the interior, linear ramps toward 0 at edges that
-    border other content (not at the outer image boundary). Shape (h, w).
+    Top-layer alpha for grid **seam** tiles: 1 in the interior, linear ramps at internal edges.
+    Horizontal ramp width = w * strip_fraction; vertical = h * strip_fraction (oblong ⇒ different px).
     """
-    if feather <= 0:
+    frac = _strip_fraction(feather)
+    fw = w * frac
+    fh = h * frac
+    if fw <= 1e-6 and fh <= 1e-6:
         return torch.ones((h, w), dtype=torch.float32)
 
     yy = torch.linspace(0, 1, h)
     xx = torch.linspace(0, 1, w)
     yy, xx = torch.meshgrid(yy, xx, indexing="ij")
 
-    feather_w = max(feather, 1)
-    feather_h = max(feather, 1)
-    left = torch.ones((h, w), dtype=torch.float32) if x == 0 else torch.clamp(xx * (w / feather_w), 0, 1)
-    right = torch.ones((h, w), dtype=torch.float32) if x + w == img_width else torch.clamp((1 - xx) * (w / feather_w), 0, 1)
-    top = torch.ones((h, w), dtype=torch.float32) if y == 0 else torch.clamp(yy * (h / feather_h), 0, 1)
-    bottom = torch.ones((h, w), dtype=torch.float32) if y + h == img_height else torch.clamp((1 - yy) * (h / feather_h), 0, 1)
+    eps = 1e-6
+    left = torch.ones((h, w), dtype=torch.float32) if x == 0 else (
+        torch.clamp(xx * (w / max(fw, eps)), 0, 1) if fw > eps else torch.ones((h, w), dtype=torch.float32)
+    )
+    right = torch.ones((h, w), dtype=torch.float32) if x + w == img_width else (
+        torch.clamp((1 - xx) * (w / max(fw, eps)), 0, 1) if fw > eps else torch.ones((h, w), dtype=torch.float32)
+    )
+    top = torch.ones((h, w), dtype=torch.float32) if y == 0 else (
+        torch.clamp(yy * (h / max(fh, eps)), 0, 1) if fh > eps else torch.ones((h, w), dtype=torch.float32)
+    )
+    bottom = torch.ones((h, w), dtype=torch.float32) if y + h == img_height else (
+        torch.clamp((1 - yy) * (h / max(fh, eps)), 0, 1) if fh > eps else torch.ones((h, w), dtype=torch.float32)
+    )
 
     return torch.minimum(torch.minimum(left, right), torch.minimum(top, bottom))
 
@@ -115,8 +124,7 @@ def merge_fixed_grid_tiles(
             _pattern_id,
             _tiles_data,
         ) = config_tuple
-        frac = _feather_as_fixed_fraction(feather)
-        bx, by = compute_fixed_feather_strips(tw, th, overlap_x, overlap_y, mult, frac)
+        bx, by = compute_fixed_feather_strips(tw, th, overlap_x, overlap_y, mult, _strip_fraction(feather))
     elif v == 3:
         (
             _ver,
@@ -175,7 +183,7 @@ def merge_tiles(
     feather: float,
     device: torch.device | None = None,
 ) -> torch.Tensor:
-    """Merge: grid uses over + alpha on seam tiles; fixed uses traversal order + same alpha model."""
+    """Merge: grid uses over + tile-fraction alpha on seam tiles; fixed uses traversal order + same fraction model."""
     ver = config_tuple[0]
     if ver in (3, 5):
         return merge_fixed_grid_tiles(tiles, config_tuple, feather, device=device)
@@ -217,7 +225,7 @@ def merge_tiles(
 
 class VideoTileMerge:
     """
-    **feather**: grid ⇒ px alpha ramp on seam tiles (over composite). Fixed ⇒ fraction of tile W/H for ramp on v5.
+    **feather**: 0–0.5 = fraction of tile **width** (H ramps) and **height** (V ramps); max 50% per axis.
     """
 
     @classmethod
@@ -229,10 +237,10 @@ class VideoTileMerge:
                 "feather": (
                     "FLOAT",
                     {
-                        "default": 32.0,
+                        "default": 0.125,
                         "min": 0.0,
-                        "max": 512.0,
-                        "step": 0.05,
+                        "max": 0.5,
+                        "step": 0.005,
                     },
                 ),
             },
