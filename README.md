@@ -56,14 +56,14 @@ Splits a video/image batch into a list of tiles using a **tiles_x × tiles_y** g
 
 ### Video Tile Slicer (fixed size)
 
-Same output **socket types** as **Video Tile Slicer (var. size)**, but layout is driven by tile dimensions and stride (fractional overlap), not a small fixed grid count.
+Same output **socket types** as **Video Tile Slicer (var. size)**, but layout uses **fixed tile size** and **overlap** along each axis.
 
 | Input | Description |
 |-------|-------------|
 | `images` | IMAGE |
 | `tile_width` / `tile_height` | Tile size (step 8) |
 | `multiple` | Snaps positions/sizes to this multiple |
-| `overlap` | `1/8` … `1/2` (fraction of shorter tile side) |
+| `overlap` | `1/8` … `1/2` — **minimum** neighbour overlap (fraction of tile W / H per axis). Tiles are placed with **equal stride** so every pair of neighbours shares the **same** overlap (≥ that minimum) and the grid is flush to the frame; if no exact stride fits `(width - tile_w)` / `(height - tile_h)` on the `multiple` grid, it falls back to the older step-and-last-flush layout. |
 | `pattern` | `row`, `column`, `spiral`, `double_spiral` |
 
 **Outputs:** Same sockets as **Video Tile Slicer (var. size)**. `tile_config` is **v5** (geometry + overlap stride only). Changing **Video Tile Merge** `feather` does not require re-slicing.
