@@ -63,7 +63,7 @@ Same output **socket types** as **Video Tile Slicer (var. size)**, but layout us
 | `images` | IMAGE |
 | `tile_width` / `tile_height` | Tile size (step 8) |
 | `multiple` | Snaps positions/sizes to this multiple |
-| `overlap` | `1/8` … `1/2` — **minimum** neighbour overlap (fraction of tile W / H per axis). Tiles are placed with **equal stride** so every pair of neighbours shares the **same** overlap (≥ that minimum) and the grid is flush to the frame; if no exact stride fits `(width - tile_w)` / `(height - tile_h)` on the `multiple` grid, it falls back to the older step-and-last-flush layout. |
+| `overlap` | `1/8` … `1/2` — **minimum** neighbour overlap (fraction of tile W / H per axis). The slicer uses the **fewest** tiles per axis so every neighbour stride stays ≤ `tile − overlap` (overlap never **below** your minimum). Strides are snapped to `multiple` with the spare pixels spread across gaps—so overlaps can differ slightly by one `multiple`, but you no longer get pathological layouts where the only valid “exact” stride was a few pixels. |
 | `pattern` | `row`, `column`, `spiral`, `double_spiral` |
 
 **Outputs:** Same sockets as **Video Tile Slicer (var. size)**. `tile_config` is **v5** (geometry + overlap stride only). Changing **Video Tile Merge** `feather` does not require re-slicing.

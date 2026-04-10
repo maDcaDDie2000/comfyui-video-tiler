@@ -5,6 +5,7 @@ Fixed-size tile layout with fractional overlap and traversal patterns (row, colu
 from __future__ import annotations
 
 import colorsys
+import math
 from typing import Literal
 
 import numpy as np
@@ -39,15 +40,17 @@ def _axis_positions(size: int, tile: int, step: int) -> list[int]:
     return sorted(set(positions))
 
 
-def _even_axis_positions_equal_overlap(
+def _even_axis_positions(
     size: int, tile: int, overlap_min: int, m: int,
-) -> tuple[list[int], int] | None:
+) -> tuple[list[int], int]:
     """
-    Tile starts 0, L, 2L, …, (n-1)L with (n-1)*L = size - tile so the last tile ends at `size`.
-    Neighbour overlap is always tile - L (constant). Pick the largest valid L (fewest tiles)
-    with overlap >= overlap_min. L is a multiple of m.
+    Place tile starts so the last tile ends at `size`, with **fewest** tiles such that every
+    neighbour stride is ≤ L_max = tile - overlap_min (so overlap ≥ overlap_min).
 
-    Returns (x_starts, actual_overlap) or None if no exact stride fits.
+    Stride may differ by at most `m` between neighbours (remainder spread across gaps).
+    Avoids the old “rem must divide L” bug (e.g. rem=736, m=32 → only L=32 → ~95% overlap).
+
+    Returns (x_starts, overlap_report) where overlap_report = tile - max(gap) (tightest blend).
     """
     tile = max(1, tile)
     size = max(1, size)
@@ -57,38 +60,40 @@ def _even_axis_positions_equal_overlap(
     if rem <= 0:
         return [0], 0
     overlap_min = max(0, min(overlap_min, tile // 2))
-    L_max = tile - overlap_min
-    if L_max < m:
-        return None
-    L_start = (L_max // m) * m
-    for L in range(L_start, m - 1, -m):
-        if L <= 0:
-            break
-        if rem % L != 0:
-            continue
-        O = tile - L
-        if O < overlap_min:
-            continue
-        k = rem // L
-        if k < 1:
-            continue
-        xs = [i * L for i in range(k + 1)]
-        return xs, O
-    return None
+    L_max = max(m, tile - overlap_min)
 
+    n_gaps_min = max(1, math.ceil(rem / L_max))
+    max_try = n_gaps_min + max(8, rem // max(m, 1) + 4)
 
-def _even_axis_positions_approximate(
-    size: int, tile: int, overlap_min: int, m: int,
-) -> tuple[list[int], int]:
-    """When no exact equal stride divides (size - tile), fall back to legacy stepping (uneven last gap)."""
-    tile = max(1, tile)
-    if tile >= size:
-        return [0], 0
-    overlap_min = max(0, min(overlap_min, tile // 2))
+    for ng in range(n_gaps_min, max_try + 1):
+        base = (rem // ng // m) * m
+        if base < m:
+            base = m
+        if base > L_max:
+            continue
+        r = rem - base * ng
+        if r < 0:
+            continue
+        gaps = [base] * ng
+        j = 0
+        while r > 0:
+            gaps[j % ng] += m
+            r -= m
+            j += 1
+        if max(gaps) > L_max:
+            continue
+        xs = [0]
+        for g in gaps:
+            xs.append(xs[-1] + g)
+        if xs[-1] != rem:
+            continue
+        o_rep = tile - max(gaps)
+        return xs, o_rep
+
     step = max(1, tile - overlap_min)
     xs = _axis_positions(size, tile, step)
-    O = tile - (xs[1] - xs[0]) if len(xs) > 1 else 0
-    return xs, max(0, O)
+    o = tile - (xs[1] - xs[0]) if len(xs) > 1 else 0
+    return xs, max(0, o)
 
 
 def spiral_indices(n_rows: int, n_cols: int) -> list[tuple[int, int]]:
@@ -180,8 +185,9 @@ def compute_fixed_layout(
 ) -> tuple[list[TileSpec], tuple]:
     """
     overlap = minimum neighbour overlap (fraction of tile per axis), capped at half tile.
-    Tiles are spaced with **equal** stride along each axis so every interior pair shares the same
-    overlap (>= that minimum); last tile is flush to the image edge. Feather is on Video Tile Merge.
+    Fewest tiles per axis such that each stride between neighbours is ≤ tile − overlap_min
+    (multiples of `multiple`; remainder split across gaps). Last tile flush to the frame.
+    Feather is on Video Tile Merge.
     """
     m = max(1, min(64, multiple))
     tile_w = _snap_to_multiple(max(m, tile_w_in), m)
@@ -198,17 +204,8 @@ def compute_fixed_layout(
     if overlap_y_min < 0:
         overlap_y_min = 0
 
-    even_x = _even_axis_positions_equal_overlap(width, tile_w, overlap_x_min, m)
-    if even_x is not None:
-        xs, overlap_x = even_x
-    else:
-        xs, overlap_x = _even_axis_positions_approximate(width, tile_w, overlap_x_min, m)
-
-    even_y = _even_axis_positions_equal_overlap(height, tile_h, overlap_y_min, m)
-    if even_y is not None:
-        ys, overlap_y = even_y
-    else:
-        ys, overlap_y = _even_axis_positions_approximate(height, tile_h, overlap_y_min, m)
+    xs, overlap_x = _even_axis_positions(width, tile_w, overlap_x_min, m)
+    ys, overlap_y = _even_axis_positions(height, tile_h, overlap_y_min, m)
     n_cols = len(xs)
     n_rows = len(ys)
 
@@ -275,7 +272,7 @@ def fixed_layout_label_string(
         f"Output: {width}x{height}",
         f"Mode: fixed tile",
         f"Tile: {tile_w}x{tile_h}",
-        f"Overlap (equal between neighbours, ≥ min): {overlap_x}x{overlap_y}",
+        f"Overlap (≥ min; stride ≤ tile−min): {overlap_x}x{overlap_y}",
         f"Pattern: {pattern}",
         f"Total tiles: {n_tiles}",
         f"Feather: set on Video Tile Merge (fraction of tile W/H)",
