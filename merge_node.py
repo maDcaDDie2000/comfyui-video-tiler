@@ -1,16 +1,15 @@
 """
 Video Tile Merge node - reconstructs video from processed tiles.
-Uses shared output tensor. Feathering is **linear alpha** on the **top** layer only: opaque (1)
-in the tile interior, ramping toward 0 at internal edges so the **underlying** composite shows through.
-Not symmetric “blur” / averaging in the overlap core.
+Uses shared output tensor. Feathering is **linear alpha** on the **top** layer only where a pixel
+was already written by an **earlier** tile (`covered` mask — no RGB thresholding). Elsewhere the
+current tile is pasted at **full opacity**.
 
 Single **feather** (not in TILE_CONFIG), same rule everywhere:
   **0–0.5** = fraction of this tile’s **width** for horizontal ramps and **height** for vertical ramps
-  (oblong seam tiles get a wider ramp in px on the long side). Capped at **50%** per axis. No pixel ring.
+  (oblong seam tiles get a wider ramp in px on the long side). Capped at **50%** per axis.
 
-  - **Grid** (v1/v2/v4): seam tiles composited **over** normals with that alpha model.
-  - **Fixed** (v3/v5): same at internal edges; strip px = fraction × tile_w / tile_h, then min(overlap),
-    snapped to multiple. **v3**: baked tuple strips; merge **feather** ignored.
+  - **Grid** (v1/v2/v4): seam tiles composited **over** normals with coverage-gated feather.
+  - **Fixed** (v3/v5): traversal order + coverage; strip px from overlap × feather fraction.
 """
 
 import torch
@@ -66,6 +65,34 @@ def _feather_mask(
     )
 
     return torch.minimum(torch.minimum(left, right), torch.minimum(top, bottom))
+
+
+def _blend_tile_with_coverage(
+    output: torch.Tensor,
+    covered: torch.Tensor,
+    tile: torch.Tensor,
+    y: int,
+    x: int,
+    h: int,
+    w: int,
+    alpha_geom: torch.Tensor,
+) -> None:
+    """
+    Composite tile over output[y:y+h,x:x+w]. Use geometric feather only where covered[b] is True;
+    uncovered pixels get alpha=1 (full top opacity). Then mark entire tile rect covered.
+    alpha_geom: (h, w) float32 on same device as output.
+    """
+    B = output.shape[0]
+    dev = output.device
+    dt = output.dtype
+    cov = covered[:, y : y + h, x : x + w]
+    a_g = alpha_geom.to(device=dev, dtype=dt).unsqueeze(0).expand(B, h, w)
+    ones = torch.ones((B, h, w), dtype=dt, device=dev)
+    a = torch.where(cov, a_g, ones)
+    a4 = a.unsqueeze(-1)
+    region = output[:, y : y + h, x : x + w, :]
+    output[:, y : y + h, x : x + w, :] = region * (1.0 - a4) + tile * a4
+    covered[:, y : y + h, x : x + w] = True
 
 
 def _normalize_tile(t):
@@ -167,6 +194,7 @@ def merge_fixed_grid_tiles(
 
     _, _, _, tile_specs = parse_tile_config(config_tuple)
     output = torch.zeros((B, height, width, C), dtype=first.dtype, device=dev)
+    covered = torch.zeros((B, height, width), dtype=torch.bool, device=dev)
     bx_u, by_u = max(0, int(bx)), max(0, int(by))
 
     sorted_pairs = sorted(enumerate(tile_specs), key=lambda it: it[1].order)
@@ -177,11 +205,10 @@ def merge_fixed_grid_tiles(
         x, y, w, h = spec.x, spec.y, spec.w, spec.h
         if i == 0:
             output[:, y : y + h, x : x + w, :] = tile
+            covered[:, y : y + h, x : x + w] = True
             continue
         alpha = _fixed_tile_top_alpha(w, h, x, y, width, height, bx_u, by_u, dev, first.dtype)
-        a = alpha.reshape(1, h, w, 1)
-        region = output[:, y : y + h, x : x + w, :]
-        output[:, y : y + h, x : x + w, :] = region * (1.0 - a) + tile * a
+        _blend_tile_with_coverage(output, covered, tile, y, x, h, w, alpha)
 
     return output
 
@@ -214,6 +241,7 @@ def merge_tiles(
         device = first.device
 
     output = torch.zeros((B, height, width, C), dtype=first.dtype, device=device)
+    covered = torch.zeros((B, height, width), dtype=torch.bool, device=device)
 
     for orig_idx, spec in sorted(enumerate(tile_specs), key=lambda it: it[1].order):
         if orig_idx >= len(tiles_list):
@@ -223,11 +251,10 @@ def merge_tiles(
 
         if spec.type == "normal":
             output[:, y : y + h, x : x + w, :] = tile
+            covered[:, y : y + h, x : x + w] = True
         else:
-            alpha = _feather_mask(w, h, feather, x, y, width, height).to(tile.device)
-            a = alpha.reshape(1, h, w, 1)
-            region = output[:, y : y + h, x : x + w, :]
-            output[:, y : y + h, x : x + w, :] = region * (1.0 - a) + tile * a
+            alpha = _feather_mask(w, h, feather, x, y, width, height).to(device=device, dtype=output.dtype)
+            _blend_tile_with_coverage(output, covered, tile, y, x, h, w, alpha)
 
     return output
 
