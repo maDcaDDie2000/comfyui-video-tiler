@@ -32,7 +32,8 @@ Restart ComfyUI. Nodes appear under category **Video Tiler** with these display 
 |---------------------|---------------------|
 | `VideoTileSlice`    | **Video Tile Slicer (var. size)** |
 | `VideoTileSliceFixed` | **Video Tile Slicer (fixed size)** |
-| `VideoTileMerge`    | **Video Tile Merge** |
+| `VideoTileMerge`            | **Video Tile Merge** |
+| `VideoTileMergeOverlapSoft` | **Video Tile Merge (overlap soft)** |
 | `GetTile`           | **Get Tile** |
 | `ReferenceTileSlice`| **Reference Tile Slice** |
 
@@ -85,6 +86,8 @@ Reconstructs the full image/video from processed tiles. **`tile_config`** is geo
 **Output:** merged `IMAGE`. **`alpha_over`** uses coverage-gated compositing in **float32** then casts to IMAGE dtype. **`weighted_average`** accumulates weighted sums in float32.
 
 **Wiring:** Slicer `tiles` → your processing → Merge `tiles`. Same slicer `tile_config` → Merge `tile_config`. Tune **`feather`** and optional **`feather_curve`** / **`blend_mode`**. In the graph UI, expand the merge node’s **optional** inputs if **`feather_curve`** / **`blend_mode`** are collapsed — older workflows without those sockets still validate (defaults apply).
+
+**Video Tile Merge (overlap soft)** — same inputs as **Video Tile Merge** (no extra widgets). Always builds the frame as a **normalized weighted sum** of overlapping tiles; overlap strips use **smooth cosine (Hann) ramps** over the same extents as the **`feather`** rules above (geometry-only weights, accumulated in float32). Use when you want softer symmetric blending instead of painter-order compositing.
 
 ### Reference Tile Slice
 
