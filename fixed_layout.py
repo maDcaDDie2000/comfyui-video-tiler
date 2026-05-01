@@ -47,13 +47,17 @@ def _even_axis_positions(
     Place tile starts so the last tile ends at `size`, with **fewest** tiles such that every
     neighbour stride is ≤ L_max = tile - overlap_min (so overlap ≥ overlap_min).
 
-    Stride may differ by at most `m` between neighbours (remainder spread across gaps).
-    Avoids the old “rem must divide L” bug (e.g. rem=736, m=32 → only L=32 → ~95% overlap).
+    Strides use **integer equipartition** of `rem = size - tile` across `ng` gaps:
+    gap_i = ⌊rem·(i+1)/ng⌋ − ⌊rem·i/ng⌋ so sums match exactly and consecutive strides differ by
+    at most 1 pixel (no clustered “bunched” boundaries from uneven remainder walks).
+
+    ``m`` is used for L_max flooring (stride sanity vs alignment multiple) and fallback stepping.
 
     Returns (x_starts, overlap_report) where overlap_report = tile - max(gap) (tightest blend).
     """
     tile = max(1, tile)
     size = max(1, size)
+    m = max(1, min(64, m))
     if tile >= size:
         return [0], 0
     rem = size - tile
@@ -66,21 +70,8 @@ def _even_axis_positions(
     max_try = n_gaps_min + max(8, rem // max(m, 1) + 4)
 
     for ng in range(n_gaps_min, max_try + 1):
-        base = (rem // ng // m) * m
-        if base < m:
-            base = m
-        if base > L_max:
-            continue
-        r = rem - base * ng
-        if r < 0:
-            continue
-        gaps = [base] * ng
-        j = 0
-        while r > 0:
-            gaps[j % ng] += m
-            r -= m
-            j += 1
-        if max(gaps) > L_max:
+        gaps = [(rem * (i + 1)) // ng - (rem * i) // ng for i in range(ng)]
+        if not gaps or max(gaps) > L_max or min(gaps) < 1:
             continue
         xs = [0]
         for g in gaps:
