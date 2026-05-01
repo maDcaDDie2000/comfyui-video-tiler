@@ -156,7 +156,7 @@ def _merge_fixed_soft(
     first = tiles_list[0]
     if len(first.shape) < 4:
         raise ValueError(f"Tile shape {first.shape} - expected (B,H,W,C)")
-    B = first.shape[0]
+    B, C = first.shape[0], first.shape[3]
     if first.is_cuda:
         dev = first.device
     elif torch.cuda.is_available():
@@ -197,7 +197,7 @@ def _merge_grid_soft(
     first = tiles_list[0]
     if len(first.shape) < 4:
         raise ValueError(f"Tile shape {first.shape} - expected (B,H,W,C)")
-    B = first.shape[0]
+    B, C = first.shape[0], first.shape[3]
 
     if first.is_cuda:
         device = first.device
