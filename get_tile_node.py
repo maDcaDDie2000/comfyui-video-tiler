@@ -15,6 +15,15 @@ import torch
 from .tile_config import parse_tile_config
 
 
+def _scalar_int(v) -> int:
+    """ComfyUI list-mode execution may wrap INT widgets in list/tuple."""
+    while isinstance(v, (list, tuple)):
+        if len(v) == 0:
+            return 0
+        v = v[0]
+    return int(v)
+
+
 def _normalize_tile(t):
     """Ensure 4D (B,H,W,C) Comfy IMAGE."""
     if isinstance(t, (list, tuple)) and len(t) > 0:
@@ -85,7 +94,7 @@ class GetTile:
     def get_tile(self, images, tile_config: tuple, tile_index: int):
         if isinstance(tile_config, (list, tuple)) and len(tile_config) > 0:
             tile_config = tile_config[0]
-        ti = int(tile_index)
+        ti = _scalar_int(tile_index)
 
         width, height, _, tile_specs = parse_tile_config(tile_config)
         n = len(tile_specs)

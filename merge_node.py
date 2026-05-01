@@ -36,6 +36,8 @@ def _strip_fraction(feather: float) -> float:
 
 def _feather_curve_mode(v) -> str:
     """Normalize widget / list-wrapped combo value to a curve id."""
+    if v is None:
+        return "linear"
     while isinstance(v, (list, tuple)):
         if len(v) == 0:
             return "linear"
@@ -53,6 +55,20 @@ def _feather_curve_mode(v) -> str:
     if s in ("linear", "ease_in", "ease_out", "ease_in_out"):
         return s
     return "linear"
+
+
+def _blend_mode_keyword(v) -> str:
+    """alpha_over (default) vs symmetric weighted_average using geometric masks only."""
+    if v is None:
+        return "alpha_over"
+    while isinstance(v, (list, tuple)):
+        if len(v) == 0:
+            return "alpha_over"
+        v = v[0]
+    s = str(v).strip().lower().replace(" ", "_").replace("-", "_")
+    if s in ("weighted_average", "weighted", "average", "mean"):
+        return "weighted_average"
+    return "alpha_over"
 
 
 def _apply_feather_curve(alpha: torch.Tensor, mode: str) -> torch.Tensor:
@@ -141,6 +157,26 @@ def _blend_tile_with_coverage(
     covered[:, y : y + h, x : x + w] = True
 
 
+def _weighted_accum_region(
+    num: torch.Tensor,
+    den: torch.Tensor,
+    tile: torch.Tensor,
+    y: int,
+    x: int,
+    h: int,
+    w: int,
+    weight_hw: torch.Tensor,
+) -> None:
+    """Accumulate sum(weight × tile) / sum(weight) merge; weight_hw (h,w) float32, geometry-only."""
+    B, _, _, C = num.shape
+    dev = num.device
+    wt = weight_hw.to(device=dev, dtype=torch.float32).clamp(0.0, 1.0)
+    wt4 = wt.unsqueeze(0).unsqueeze(-1).expand(B, h, w, C)
+    tf = tile.float()
+    num[:, y : y + h, x : x + w, :] += tf * wt4
+    den[:, y : y + h, x : x + w] += wt.unsqueeze(0).expand(B, h, w)
+
+
 def _normalize_tile(t):
     """Unwrap (tensor,) from node output format; ensure 4D (B,H,W,C)."""
     if isinstance(t, (list, tuple)) and len(t) > 0:
@@ -191,8 +227,9 @@ def merge_fixed_grid_tiles(
     feather: float,
     device: torch.device | None = None,
     feather_curve: str = "linear",
+    blend_mode: str = "alpha_over",
 ) -> torch.Tensor:
-    """Fixed layout: paint tiles in traversal order, each composited over with feather alpha toward below."""
+    """Fixed layout: alpha_over (painter + coverage) or weighted_average (geometry weights only)."""
     v = config_tuple[0]
     if v == 5:
         (
@@ -240,11 +277,29 @@ def merge_fixed_grid_tiles(
         dev = first.device
 
     _, _, _, tile_specs = parse_tile_config(config_tuple)
-    output = torch.zeros((B, height, width, C), dtype=first.dtype, device=dev)
-    covered = torch.zeros((B, height, width), dtype=torch.bool, device=dev)
     bx_u, by_u = max(0, int(bx)), max(0, int(by))
 
     sorted_pairs = sorted(enumerate(tile_specs), key=lambda it: it[1].order)
+
+    if blend_mode == "weighted_average":
+        num = torch.zeros((B, height, width, C), dtype=torch.float32, device=dev)
+        den = torch.zeros((B, height, width), dtype=torch.float32, device=dev)
+        for i, (orig_idx, spec) in enumerate(sorted_pairs):
+            if orig_idx >= len(tiles_list):
+                break
+            tile = tiles_list[orig_idx].to(dev)
+            x, y, w, h = spec.x, spec.y, spec.w, spec.h
+            if i == 0:
+                wmask = torch.ones((h, w), dtype=torch.float32, device=dev)
+            else:
+                wmask = _fixed_tile_top_alpha(w, h, x, y, width, height, bx_u, by_u, dev, first.dtype)
+            wmask = _apply_feather_curve(wmask, feather_curve)
+            _weighted_accum_region(num, den, tile, y, x, h, w, wmask)
+        out = num / den.unsqueeze(-1).clamp(min=1e-8)
+        return out.to(dtype=first.dtype)
+
+    output = torch.zeros((B, height, width, C), dtype=first.dtype, device=dev)
+    covered = torch.zeros((B, height, width), dtype=torch.bool, device=dev)
     for i, (orig_idx, spec) in enumerate(sorted_pairs):
         if orig_idx >= len(tiles_list):
             break
@@ -268,12 +323,18 @@ def merge_tiles(
     feather: float,
     device: torch.device | None = None,
     feather_curve: str = "linear",
+    blend_mode: str = "alpha_over",
 ) -> torch.Tensor:
-    """Merge: grid uses over + tile-fraction alpha on seam tiles; fixed uses traversal order + same fraction model."""
+    """Merge: grid or fixed; alpha_over vs weighted_average (symmetric geometry weights)."""
     ver = config_tuple[0]
     if ver in (3, 5):
         return merge_fixed_grid_tiles(
-            tiles, config_tuple, feather, device=device, feather_curve=feather_curve
+            tiles,
+            config_tuple,
+            feather,
+            device=device,
+            feather_curve=feather_curve,
+            blend_mode=blend_mode,
         )
     width, height, _multiple, tile_specs = parse_tile_config(config_tuple)
 
@@ -291,6 +352,25 @@ def merge_tiles(
         device = torch.device("cuda:0")
     else:
         device = first.device
+
+    if blend_mode == "weighted_average":
+        num = torch.zeros((B, height, width, C), dtype=torch.float32, device=device)
+        den = torch.zeros((B, height, width), dtype=torch.float32, device=device)
+        for orig_idx, spec in sorted(enumerate(tile_specs), key=lambda it: it[1].order):
+            if orig_idx >= len(tiles_list):
+                break
+            tile = tiles_list[orig_idx].to(device)
+            x, y, w, h = spec.x, spec.y, spec.w, spec.h
+            if spec.type == "normal":
+                wmask = torch.ones((h, w), dtype=torch.float32, device=device)
+            else:
+                wmask = _feather_mask(w, h, feather, x, y, width, height).to(
+                    device=device, dtype=torch.float32
+                )
+            wmask = _apply_feather_curve(wmask, feather_curve)
+            _weighted_accum_region(num, den, tile, y, x, h, w, wmask)
+        out = num / den.unsqueeze(-1).clamp(min=1e-8)
+        return out.to(dtype=first.dtype)
 
     output = torch.zeros((B, height, width, C), dtype=first.dtype, device=device)
     covered = torch.zeros((B, height, width), dtype=torch.bool, device=device)
@@ -318,7 +398,7 @@ def merge_tiles(
 class VideoTileMerge:
     """
     **feather**: 0–0.5 = fraction of tile **width** (H ramps) and **height** (V ramps); max 50% per axis.
-    **feather_curve**: linear / ease_in / ease_out / ease_in_out — pointwise remap of geometric alpha before blend.
+    **Optional** — **feather_curve**, **blend_mode** (defaults keep legacy behavior if widgets absent).
     """
 
     @classmethod
@@ -336,14 +416,15 @@ class VideoTileMerge:
                         "step": 0.005,
                     },
                 ),
+            },
+            "optional": {
                 "feather_curve": (
-                    [
-                        "linear",
-                        "ease_in",
-                        "ease_out",
-                        "ease_in_out",
-                    ],
+                    ["linear", "ease_in", "ease_out", "ease_in_out"],
                     {"default": "linear"},
+                ),
+                "blend_mode": (
+                    ["alpha_over", "weighted_average"],
+                    {"default": "alpha_over"},
                 ),
             },
         }
@@ -354,15 +435,22 @@ class VideoTileMerge:
     FUNCTION = "merge"
     CATEGORY = "Video Tiler"
 
-    def merge(self, tile_config, tiles, feather, feather_curve="linear"):
+    def merge(self, tile_config, tiles, feather, feather_curve=None, blend_mode=None, **kwargs):
         if isinstance(tile_config, (list, tuple)) and len(tile_config) > 0:
             tile_config = tile_config[0]
         feather = _scalar_float(feather)
         curve = _feather_curve_mode(feather_curve)
+        mode = _blend_mode_keyword(blend_mode)
         if isinstance(tiles, (list, tuple)):
             tiles_list = list(tiles)
         else:
             tiles_list = [tiles]
-        print(f"[Video Tiler] Merging {len(tiles_list)} tiles → single IMAGE batch")
-        result = merge_tiles(tiles_list, tile_config, feather, feather_curve=curve)
+        print(f"[Video Tiler] Merging {len(tiles_list)} tiles → single IMAGE batch ({mode})")
+        result = merge_tiles(
+            tiles_list,
+            tile_config,
+            feather,
+            feather_curve=curve,
+            blend_mode=mode,
+        )
         return (result,)

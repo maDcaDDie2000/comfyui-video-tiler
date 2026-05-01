@@ -72,18 +72,19 @@ Saved workflows with an older **v3** `tile_config` still merge: legacy blur bake
 
 ### Video Tile Merge
 
-Reconstructs the full image/video from processed tiles. **`tile_config`** is geometry only; **`feather`** and **`feather_curve`** on the merge node control blending after expensive steps (keeps slicer cache stable).
+Reconstructs the full image/video from processed tiles. **`tile_config`** is geometry only; **`feather`** plus optional **`feather_curve`** / **`blend_mode`** control blending after expensive steps (keeps slicer cache stable).
 
 | Input | Description |
 |-------|-------------|
 | `tile_config` | From either slicer (**v4** grid or **v5** fixed; legacy **v3** still supported) |
 | `tiles` | Processed tiles (same list order as slice) |
 | `feather` | **0–0.5** for all layouts: fraction of the **local tile width** used for horizontal alpha ramps and of **tile height** for vertical ramps (oblong tiles ⇒ different ramp thickness in px on short vs long side). **Hard cap 50%** per axis. Then **fixed (v5)** also caps strip by stride **overlap** and snaps to `multiple`. **v3** fixed: strips come from the saved tuple (merge `feather` ignored). |
-| `feather_curve` | How the geometric feather alpha is shaped before compositing: **`linear`** (default), **`ease_in`** / **`ease_out`** (quadratic), **`ease_in_out`** (smoothstep). Same footprint; only the ramp profile changes. |
+| `feather_curve` *(optional)* | **`linear`** (default), **`ease_in`** / **`ease_out`** (quadratic), **`ease_in_out`** (smoothstep). Pointwise remap of geometric weights only. |
+| `blend_mode` *(optional)* | **`alpha_over`** (default): painter order + **`covered`** gate (same rules as before). **`weighted_average`**: normalized sum of geometry-weighted tile colors (`sum(w × pixel) / sum(w)`), **same geometry-derived weights only** (no RGB thresholds). |
 
-**Output:** merged `IMAGE`. Both modes use **alpha-over** (`dst×(1−α)+src×α`): geometric ramps define α in overlap zones; accumulation runs in **float32**, then results match your IMAGE dtype. **`feather`** sets ramp **extent**; **`feather_curve`** reshapes **opacity along that ramp**.
+**Output:** merged `IMAGE`. **`alpha_over`** uses coverage-gated compositing in **float32** then casts to IMAGE dtype. **`weighted_average`** accumulates weighted sums in float32.
 
-**Wiring:** Slicer `tiles` → your processing → Merge `tiles`. Same slicer `tile_config` → Merge `tile_config`. Tune **`feather`** and optionally **`feather_curve`** on the merge node.
+**Wiring:** Slicer `tiles` → your processing → Merge `tiles`. Same slicer `tile_config` → Merge `tile_config`. Tune **`feather`** and optional **`feather_curve`** / **`blend_mode`**. In the graph UI, expand the merge node’s **optional** inputs if **`feather_curve`** / **`blend_mode`** are collapsed — older workflows without those sockets still validate (defaults apply).
 
 ### Reference Tile Slice
 
