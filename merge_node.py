@@ -11,7 +11,10 @@ Single **feather** (not in TILE_CONFIG), same rule everywhere:
   (oblong seam tiles get a wider ramp in px on the long side). Capped at **50%** per axis.
 
   - **Grid** (v1/v2/v4): seam tiles composited **over** normals with coverage-gated feather.
+    Seam masks use **overlap kind** (horizontal strip vs vertical strip vs corner) so we do not multiply
+    irrelevant edge ramps (avoids weight dips where sums fall below a proper blend).
   - **Fixed** (v3/v5): traversal order + coverage; strip px from overlap × feather fraction.
+    Internal-edge ramps combine with **minimum** (not multiply) so corners are not over-darkened.
 """
 
 import torch
@@ -88,13 +91,20 @@ def _apply_feather_curve(alpha: torch.Tensor, mode: str) -> torch.Tensor:
     return alpha
 
 
-def _feather_mask(
-    w: int, h: int, feather: float,
-    x: int, y: int, img_width: int, img_height: int,
+def _grid_seam_feather_mask(
+    seam_kind: str,
+    w: int,
+    h: int,
+    feather: float,
+    x: int,
+    y: int,
+    img_width: int,
+    img_height: int,
 ) -> torch.Tensor:
     """
-    Top-layer alpha for grid **seam** tiles: 1 in the interior, linear ramps at internal edges.
-    Horizontal ramp width = w * strip_fraction; vertical = h * strip_fraction (oblong ⇒ different px).
+    Geometry-only alpha weights for grid seam tiles. Uses seam_kind so horizontal strips only feather
+    vertically (and vice versa), avoiding irrelevant side ramps that multiplied together dip below a
+    fair blend. Corner tiles use max(min_lr, min_tb) to soften the classic min-of-four center dip.
     """
     frac = _strip_fraction(feather)
     fw = w * frac
@@ -120,6 +130,15 @@ def _feather_mask(
         torch.clamp((1 - yy) * (h / max(fh, eps)), 0, 1) if fh > eps else torch.ones((h, w), dtype=torch.float32)
     )
 
+    if seam_kind == "overlap_v":
+        return torch.minimum(top, bottom)
+    if seam_kind == "overlap_h":
+        return torch.minimum(left, right)
+    if seam_kind == "overlap_corner":
+        return torch.maximum(
+            torch.minimum(left, right),
+            torch.minimum(top, bottom),
+        )
     return torch.minimum(torch.minimum(left, right), torch.minimum(top, bottom))
 
 
@@ -201,23 +220,23 @@ def _fixed_tile_top_alpha(
     dtype: torch.dtype,
 ) -> torch.Tensor:
     """
-    Alpha of the **current** (top) fixed tile: 1 inward from internal edges, linear ramp to 0 at the
-    tile border where it meets already-painted pixels (same geometry as former weight mask, but used
-    for `dst = dst * (1 - a) + src * a` so lower layers show through only in the ramp).
+    Alpha of the **current** (top) fixed tile: 1 inward from internal edges, linear ramps toward 0 at
+    borders facing neighbors. Edge factors combine with **minimum** so perpendicular ramps do not
+    multiply into an overly dark corner (matches partition-friendly feather intent).
     """
     ly = torch.arange(h, device=device, dtype=torch.float32).view(-1, 1).expand(h, w)
     lx = torch.arange(w, device=device, dtype=torch.float32).view(1, -1).expand(h, w)
     m = torch.ones((h, w), device=device, dtype=torch.float32)
     if x > 0 and feather_x > 0:
-        m *= torch.where(lx < feather_x, lx / feather_x, torch.ones_like(m))
+        m = torch.minimum(m, torch.where(lx < feather_x, lx / feather_x, torch.ones_like(m)))
     if y > 0 and feather_y > 0:
-        m *= torch.where(ly < feather_y, ly / feather_y, torch.ones_like(m))
+        m = torch.minimum(m, torch.where(ly < feather_y, ly / feather_y, torch.ones_like(m)))
     if x + w < img_w and feather_x > 0:
         d = (w - 1) - lx
-        m *= torch.where(d < feather_x, d / feather_x, torch.ones_like(m))
+        m = torch.minimum(m, torch.where(d < feather_x, d / feather_x, torch.ones_like(m)))
     if y + h < img_h and feather_y > 0:
         d = (h - 1) - ly
-        m *= torch.where(d < feather_y, d / feather_y, torch.ones_like(m))
+        m = torch.minimum(m, torch.where(d < feather_y, d / feather_y, torch.ones_like(m)))
     return m
 
 
@@ -364,9 +383,9 @@ def merge_tiles(
             if spec.type == "normal":
                 wmask = torch.ones((h, w), dtype=torch.float32, device=device)
             else:
-                wmask = _feather_mask(w, h, feather, x, y, width, height).to(
-                    device=device, dtype=torch.float32
-                )
+                wmask = _grid_seam_feather_mask(
+                    spec.type, w, h, feather, x, y, width, height
+                ).to(device=device, dtype=torch.float32)
             wmask = _apply_feather_curve(wmask, feather_curve)
             _weighted_accum_region(num, den, tile, y, x, h, w, wmask)
         out = num / den.unsqueeze(-1).clamp(min=1e-8)
@@ -385,9 +404,9 @@ def merge_tiles(
             output[:, y : y + h, x : x + w, :] = tile
             covered[:, y : y + h, x : x + w] = True
         else:
-            alpha = _feather_mask(w, h, feather, x, y, width, height).to(
-                device=device, dtype=torch.float32
-            )
+            alpha = _grid_seam_feather_mask(
+                spec.type, w, h, feather, x, y, width, height
+            ).to(device=device, dtype=torch.float32)
             _blend_tile_with_coverage(
                 output, covered, tile, y, x, h, w, alpha, feather_curve=feather_curve
             )
