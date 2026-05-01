@@ -1,8 +1,10 @@
 """
 Video Tile Merge node - reconstructs video from processed tiles.
-Uses shared output tensor. Feathering is **linear alpha** on the **top** layer only where a pixel
-was already written by an **earlier** tile (`covered` mask — no RGB thresholding). Elsewhere the
-current tile is pasted at **full opacity**.
+Uses shared output tensor. Feather masks gate alpha-over compositing where an earlier tile already
+wrote the pixel (`covered`). Elsewhere the current tile is pasted at full opacity.
+
+Geometric ramps are linear per-side (same footprint); optional **feather_curve** remaps opacity
+pointwise before blending. Multiply-add runs in float32, then casts back to IMAGE dtype.
 
 Single **feather** (not in TILE_CONFIG), same rule everywhere:
   **0–0.5** = fraction of this tile’s **width** for horizontal ramps and **height** for vertical ramps
@@ -30,6 +32,44 @@ def _scalar_float(v) -> float:
 def _strip_fraction(feather: float) -> float:
     """Feather knob: fraction of local tile width/height for ramp extent, max 50%."""
     return max(0.0, min(0.5, _scalar_float(feather)))
+
+
+def _feather_curve_mode(v) -> str:
+    """Normalize widget / list-wrapped combo value to a curve id."""
+    while isinstance(v, (list, tuple)):
+        if len(v) == 0:
+            return "linear"
+        v = v[0]
+    s = str(v).strip().lower().replace("-", "_").replace("+", "_")
+    aliases = {
+        "easein": "ease_in",
+        "ease_out": "ease_out",
+        "easeout": "ease_out",
+        "easeinout": "ease_in_out",
+        "ease_in_out": "ease_in_out",
+    }
+    if s in aliases:
+        return aliases[s]
+    if s in ("linear", "ease_in", "ease_out", "ease_in_out"):
+        return s
+    return "linear"
+
+
+def _apply_feather_curve(alpha: torch.Tensor, mode: str) -> torch.Tensor:
+    """
+    Pointwise remap of geometric alpha in [0, 1]. Interior remains ~1; edges reshape transition speed.
+    ease_in_out uses smoothstep (3t² − 2t³).
+    """
+    if mode == "linear":
+        return alpha
+    t = alpha.clamp(0.0, 1.0)
+    if mode == "ease_in":
+        return t * t
+    if mode == "ease_out":
+        return 1.0 - (1.0 - t) * (1.0 - t)
+    if mode == "ease_in_out":
+        return t * t * (3.0 - 2.0 * t)
+    return alpha
 
 
 def _feather_mask(
@@ -76,22 +116,28 @@ def _blend_tile_with_coverage(
     h: int,
     w: int,
     alpha_geom: torch.Tensor,
+    feather_curve: str = "linear",
 ) -> None:
     """
     Composite tile over output[y:y+h,x:x+w]. Use geometric feather only where covered[b] is True;
     uncovered pixels get alpha=1 (full top opacity). Then mark entire tile rect covered.
-    alpha_geom: (h, w) float32 on same device as output.
+    Feather remap + multiply-add use float32; write back in output dtype.
     """
     B = output.shape[0]
     dev = output.device
     dt = output.dtype
     cov = covered[:, y : y + h, x : x + w]
-    a_g = alpha_geom.to(device=dev, dtype=dt).unsqueeze(0).expand(B, h, w)
-    ones = torch.ones((B, h, w), dtype=dt, device=dev)
+    a_g = alpha_geom.to(device=dev, dtype=torch.float32)
+    a_g = _apply_feather_curve(a_g, feather_curve)
+    a_g = a_g.unsqueeze(0).expand(B, h, w)
+    ones = torch.ones((B, h, w), dtype=torch.float32, device=dev)
     a = torch.where(cov, a_g, ones)
     a4 = a.unsqueeze(-1)
     region = output[:, y : y + h, x : x + w, :]
-    output[:, y : y + h, x : x + w, :] = region * (1.0 - a4) + tile * a4
+    region_f = region.float()
+    tile_f = tile.float()
+    blended = region_f * (1.0 - a4) + tile_f * a4
+    output[:, y : y + h, x : x + w, :] = blended.to(dtype=dt)
     covered[:, y : y + h, x : x + w] = True
 
 
@@ -144,8 +190,9 @@ def merge_fixed_grid_tiles(
     config_tuple: tuple,
     feather: float,
     device: torch.device | None = None,
+    feather_curve: str = "linear",
 ) -> torch.Tensor:
-    """Fixed layout: paint tiles in traversal order, each composited over with linear alpha (feather toward below)."""
+    """Fixed layout: paint tiles in traversal order, each composited over with feather alpha toward below."""
     v = config_tuple[0]
     if v == 5:
         (
@@ -208,7 +255,9 @@ def merge_fixed_grid_tiles(
             covered[:, y : y + h, x : x + w] = True
             continue
         alpha = _fixed_tile_top_alpha(w, h, x, y, width, height, bx_u, by_u, dev, first.dtype)
-        _blend_tile_with_coverage(output, covered, tile, y, x, h, w, alpha)
+        _blend_tile_with_coverage(
+            output, covered, tile, y, x, h, w, alpha, feather_curve=feather_curve
+        )
 
     return output
 
@@ -218,11 +267,14 @@ def merge_tiles(
     config_tuple: tuple,
     feather: float,
     device: torch.device | None = None,
+    feather_curve: str = "linear",
 ) -> torch.Tensor:
     """Merge: grid uses over + tile-fraction alpha on seam tiles; fixed uses traversal order + same fraction model."""
     ver = config_tuple[0]
     if ver in (3, 5):
-        return merge_fixed_grid_tiles(tiles, config_tuple, feather, device=device)
+        return merge_fixed_grid_tiles(
+            tiles, config_tuple, feather, device=device, feather_curve=feather_curve
+        )
     width, height, _multiple, tile_specs = parse_tile_config(config_tuple)
 
     tiles_list = [_normalize_tile(t) for t in tiles]
@@ -253,8 +305,12 @@ def merge_tiles(
             output[:, y : y + h, x : x + w, :] = tile
             covered[:, y : y + h, x : x + w] = True
         else:
-            alpha = _feather_mask(w, h, feather, x, y, width, height).to(device=device, dtype=output.dtype)
-            _blend_tile_with_coverage(output, covered, tile, y, x, h, w, alpha)
+            alpha = _feather_mask(w, h, feather, x, y, width, height).to(
+                device=device, dtype=torch.float32
+            )
+            _blend_tile_with_coverage(
+                output, covered, tile, y, x, h, w, alpha, feather_curve=feather_curve
+            )
 
     return output
 
@@ -262,6 +318,7 @@ def merge_tiles(
 class VideoTileMerge:
     """
     **feather**: 0–0.5 = fraction of tile **width** (H ramps) and **height** (V ramps); max 50% per axis.
+    **feather_curve**: linear / ease_in / ease_out / ease_in_out — pointwise remap of geometric alpha before blend.
     """
 
     @classmethod
@@ -279,6 +336,15 @@ class VideoTileMerge:
                         "step": 0.005,
                     },
                 ),
+                "feather_curve": (
+                    [
+                        "linear",
+                        "ease_in",
+                        "ease_out",
+                        "ease_in_out",
+                    ],
+                    {"default": "linear"},
+                ),
             },
         }
 
@@ -288,14 +354,15 @@ class VideoTileMerge:
     FUNCTION = "merge"
     CATEGORY = "Video Tiler"
 
-    def merge(self, tile_config, tiles, feather):
+    def merge(self, tile_config, tiles, feather, feather_curve="linear"):
         if isinstance(tile_config, (list, tuple)) and len(tile_config) > 0:
             tile_config = tile_config[0]
         feather = _scalar_float(feather)
+        curve = _feather_curve_mode(feather_curve)
         if isinstance(tiles, (list, tuple)):
             tiles_list = list(tiles)
         else:
             tiles_list = [tiles]
         print(f"[Video Tiler] Merging {len(tiles_list)} tiles → single IMAGE batch")
-        result = merge_tiles(tiles_list, tile_config, feather)
+        result = merge_tiles(tiles_list, tile_config, feather, feather_curve=curve)
         return (result,)

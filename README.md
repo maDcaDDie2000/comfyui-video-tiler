@@ -72,17 +72,18 @@ Saved workflows with an older **v3** `tile_config` still merge: legacy blur bake
 
 ### Video Tile Merge
 
-Reconstructs the full image/video from processed tiles. **`tile_config`** is geometry only; a single **`feather`** on the merge node controls blending after expensive steps (keeps slicer cache stable).
+Reconstructs the full image/video from processed tiles. **`tile_config`** is geometry only; **`feather`** and **`feather_curve`** on the merge node control blending after expensive steps (keeps slicer cache stable).
 
 | Input | Description |
 |-------|-------------|
 | `tile_config` | From either slicer (**v4** grid or **v5** fixed; legacy **v3** still supported) |
 | `tiles` | Processed tiles (same list order as slice) |
 | `feather` | **0–0.5** for all layouts: fraction of the **local tile width** used for horizontal alpha ramps and of **tile height** for vertical ramps (oblong tiles ⇒ different ramp thickness in px on short vs long side). **Hard cap 50%** per axis. Then **fixed (v5)** also caps strip by stride **overlap** and snaps to `multiple`. **v3** fixed: strips come from the saved tuple (merge `feather` ignored). |
+| `feather_curve` | How the geometric feather alpha is shaped before compositing: **`linear`** (default), **`ease_in`** / **`ease_out`** (quadratic), **`ease_in_out`** (smoothstep). Same footprint; only the ramp profile changes. |
 
-**Output:** merged `IMAGE`. Both modes use **painter-style “over”** with **linear alpha** on the top layer: **100%** in the interior, ramp toward **0** at internal edges into what’s below. **`feather`** is always a **fraction of tile width / height** (max **half** the side), not a pixel ring—so a wide seam tile gets a wider ramp in pixels than a narrow one.
+**Output:** merged `IMAGE`. Both modes use **alpha-over** (`dst×(1−α)+src×α`): geometric ramps define α in overlap zones; accumulation runs in **float32**, then results match your IMAGE dtype. **`feather`** sets ramp **extent**; **`feather_curve`** reshapes **opacity along that ramp**.
 
-**Wiring:** Slicer `tiles` → your processing → Merge `tiles`. Same slicer `tile_config` → Merge `tile_config`. Tune **`feather`** on the merge node.
+**Wiring:** Slicer `tiles` → your processing → Merge `tiles`. Same slicer `tile_config` → Merge `tile_config`. Tune **`feather`** and optionally **`feather_curve`** on the merge node.
 
 ### Reference Tile Slice
 
@@ -106,7 +107,7 @@ Returns **one** tile by index for manual wiring or external loops.
 
 Slice nodes emit `tiles` as a **list**. ComfyUI can run downstream nodes **once per tile** when wired in list context.
 
-**Wiring:** Slicer `tiles` → your processing → Merge `tiles`. Same slicer `tile_config` → Merge `tile_config`. Tune **`feather`** (0–0.5, fraction of tile W/H per axis; see merge table).
+**Wiring:** Slicer `tiles` → your processing → Merge `tiles`. Same slicer `tile_config` → Merge `tile_config`. Tune **`feather`** (0–0.5, fraction of tile W/H per axis; see merge table) and **`feather_curve`** if needed.
 
 No custom loop nodes required; processing runs one tile at a time (VRAM-friendly).
 

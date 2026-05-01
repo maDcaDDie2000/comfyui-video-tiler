@@ -2568,7 +2568,8 @@
         "Node name for S&R": "VideoTileMerge"
       },
       "widgets_values": [
-        0.25
+        0.25,
+        "linear"
       ]
     },
     {
