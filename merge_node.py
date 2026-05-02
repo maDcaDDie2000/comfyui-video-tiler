@@ -3,8 +3,9 @@ Video Tile Merge node - reconstructs video from processed tiles.
 Uses shared output tensor. Feather masks gate alpha-over compositing where an earlier tile already
 wrote the pixel (`covered`). Elsewhere the current tile is pasted at full opacity.
 
-Geometric ramps are linear per-side (same footprint); optional **feather_curve** remaps opacity
-pointwise before blending. Multiply-add runs in float32, then casts back to IMAGE dtype.
+Geometric ramps use **nearest-internal-edge** distance (per-axis strip normalization, then min),
+then a cosine rise — avoids multiplicative corner troughs where weights dipped together.
+Optional **feather_curve** remaps that scalar further before blending.
 
 Single **feather** (not in TILE_CONFIG), same rule everywhere:
   **0–0.5** = fraction of this tile’s **width** for horizontal ramps and **height** for vertical ramps
@@ -13,6 +14,8 @@ Single **feather** (not in TILE_CONFIG), same rule everywhere:
   - **Grid** (v1/v2/v4): seam tiles composited **over** normals with coverage-gated feather.
   - **Fixed** (v3/v5): traversal order + coverage; strip px from overlap × feather fraction.
 """
+
+import math
 
 import torch
 
@@ -71,6 +74,12 @@ def _blend_mode_keyword(v) -> str:
     return "alpha_over"
 
 
+def _cosine_ramp01(t: torch.Tensor) -> torch.Tensor:
+    """Map normalized distance t∈[0,1] through Hann rise; endpoints derivative 0."""
+    t = t.clamp(0.0, 1.0)
+    return 0.5 * (1.0 - torch.cos(math.pi * t))
+
+
 def _apply_feather_curve(alpha: torch.Tensor, mode: str) -> torch.Tensor:
     """
     Pointwise remap of geometric alpha in [0, 1]. Interior remains ~1; edges reshape transition speed.
@@ -93,34 +102,31 @@ def _feather_mask(
     x: int, y: int, img_width: int, img_height: int,
 ) -> torch.Tensor:
     """
-    Top-layer alpha for grid **seam** tiles: 1 in the interior, linear ramps at internal edges.
-    Horizontal ramp width = w * strip_fraction; vertical = h * strip_fraction (oblong ⇒ different px).
+    Grid **seam** tile top-alpha from nearest internal canvas edge (pixel units per-axis strip).
+    min(normalized distances) + cosine replaces product-of-edges (no corner weight trough).
     """
     frac = _strip_fraction(feather)
     fw = w * frac
     fh = h * frac
-    if fw <= 1e-6 and fh <= 1e-6:
+    eps = 1e-6
+    if fw <= eps and fh <= eps:
         return torch.ones((h, w), dtype=torch.float32)
 
-    yy = torch.linspace(0, 1, h)
-    xx = torch.linspace(0, 1, w)
-    yy, xx = torch.meshgrid(yy, xx, indexing="ij")
-
-    eps = 1e-6
-    left = torch.ones((h, w), dtype=torch.float32) if x == 0 else (
-        torch.clamp(xx * (w / max(fw, eps)), 0, 1) if fw > eps else torch.ones((h, w), dtype=torch.float32)
-    )
-    right = torch.ones((h, w), dtype=torch.float32) if x + w == img_width else (
-        torch.clamp((1 - xx) * (w / max(fw, eps)), 0, 1) if fw > eps else torch.ones((h, w), dtype=torch.float32)
-    )
-    top = torch.ones((h, w), dtype=torch.float32) if y == 0 else (
-        torch.clamp(yy * (h / max(fh, eps)), 0, 1) if fh > eps else torch.ones((h, w), dtype=torch.float32)
-    )
-    bottom = torch.ones((h, w), dtype=torch.float32) if y + h == img_height else (
-        torch.clamp((1 - yy) * (h / max(fh, eps)), 0, 1) if fh > eps else torch.ones((h, w), dtype=torch.float32)
-    )
-
-    return torch.minimum(torch.minimum(left, right), torch.minimum(top, bottom))
+    ly = torch.arange(h, dtype=torch.float32).view(-1, 1).expand(h, w)
+    lx = torch.arange(w, dtype=torch.float32).view(1, -1).expand(h, w)
+    norms: list[torch.Tensor] = []
+    if x > 0 and fw > eps:
+        norms.append(lx / fw)
+    if x + w < img_width and fw > eps:
+        norms.append(((w - 1) - lx) / fw)
+    if y > 0 and fh > eps:
+        norms.append(ly / fh)
+    if y + h < img_height and fh > eps:
+        norms.append(((h - 1) - ly) / fh)
+    if not norms:
+        return torch.ones((h, w), dtype=torch.float32)
+    t = torch.min(torch.stack(norms, dim=0), dim=0).values.clamp(0.0, 1.0)
+    return _cosine_ramp01(t)
 
 
 def _blend_tile_with_coverage(
@@ -201,24 +207,26 @@ def _fixed_tile_top_alpha(
     dtype: torch.dtype,
 ) -> torch.Tensor:
     """
-    Alpha of the **current** (top) fixed tile: 1 inward from internal edges, linear ramp to 0 at the
-    tile border where it meets already-painted pixels (same geometry as former weight mask, but used
-    for `dst = dst * (1 - a) + src * a` so lower layers show through only in the ramp).
+    Fixed-layout top alpha: nearest internal edge in normalized strip space (per axis), then min → cosine.
+    Interior reaches 1 away from overlap strips; avoids multiplicative corner dips vs canvas below.
     """
+    _ = dtype
+    eps_d = 1e-6
     ly = torch.arange(h, device=device, dtype=torch.float32).view(-1, 1).expand(h, w)
     lx = torch.arange(w, device=device, dtype=torch.float32).view(1, -1).expand(h, w)
-    m = torch.ones((h, w), device=device, dtype=torch.float32)
+    norms: list[torch.Tensor] = []
     if x > 0 and feather_x > 0:
-        m *= torch.where(lx < feather_x, lx / feather_x, torch.ones_like(m))
+        norms.append(lx / max(float(feather_x), eps_d))
     if y > 0 and feather_y > 0:
-        m *= torch.where(ly < feather_y, ly / feather_y, torch.ones_like(m))
+        norms.append(ly / max(float(feather_y), eps_d))
     if x + w < img_w and feather_x > 0:
-        d = (w - 1) - lx
-        m *= torch.where(d < feather_x, d / feather_x, torch.ones_like(m))
+        norms.append(((w - 1) - lx) / max(float(feather_x), eps_d))
     if y + h < img_h and feather_y > 0:
-        d = (h - 1) - ly
-        m *= torch.where(d < feather_y, d / feather_y, torch.ones_like(m))
-    return m
+        norms.append(((h - 1) - ly) / max(float(feather_y), eps_d))
+    if not norms:
+        return torch.ones((h, w), device=device, dtype=torch.float32)
+    t = torch.min(torch.stack(norms, dim=0), dim=0).values.clamp(0.0, 1.0)
+    return _cosine_ramp01(t)
 
 
 def merge_fixed_grid_tiles(

@@ -83,11 +83,11 @@ Reconstructs the full image/video from processed tiles. **`tile_config`** is geo
 | `feather_curve` *(optional)* | **`linear`** (default), **`ease_in`** / **`ease_out`** (quadratic), **`ease_in_out`** (smoothstep). Pointwise remap of geometric weights only. |
 | `blend_mode` *(optional)* | **`alpha_over`** (default): painter order + **`covered`** gate (same rules as before). **`weighted_average`**: normalized sum of geometry-weighted tile colors (`sum(w × pixel) / sum(w)`), **same geometry-derived weights only** (no RGB thresholds). |
 
-**Output:** merged `IMAGE`. **`alpha_over`** uses coverage-gated compositing in **float32** then casts to IMAGE dtype. **`weighted_average`** accumulates weighted sums in float32.
+**Output:** merged `IMAGE`. **`alpha_over`** uses coverage-gated compositing in **float32** then casts to IMAGE dtype. **`weighted_average`** accumulates weighted sums in float32. Feather geometry uses **nearest-internal-edge** normalized distance (then cosine) so overlap weights don’t multiply into corner “dips.”
 
 **Wiring:** Slicer `tiles` → your processing → Merge `tiles`. Same slicer `tile_config` → Merge `tile_config`. Tune **`feather`** and optional **`feather_curve`** / **`blend_mode`**. In the graph UI, expand the merge node’s **optional** inputs if **`feather_curve`** / **`blend_mode`** are collapsed — older workflows without those sockets still validate (defaults apply).
 
-**Video Tile Merge (overlap soft)** — same inputs as **Video Tile Merge** (no extra widgets). Always builds the frame as a **normalized weighted sum** of overlapping tiles; overlap strips use **smooth cosine (Hann) ramps** over the same extents as the **`feather`** rules above (geometry-only weights, accumulated in float32). Use when you want softer symmetric blending instead of painter-order compositing.
+**Video Tile Merge (overlap soft)** — same inputs as **Video Tile Merge** (no extra widgets). Normalized weighted sum merge using the **same feather geometry** as the main merge (nearest-edge cosine ramps).
 
 ### Reference Tile Slice
 
