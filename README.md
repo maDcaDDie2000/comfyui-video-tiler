@@ -36,6 +36,7 @@ Restart ComfyUI. Nodes appear under category **Video Tiler** with these display 
 | `VideoTileMergeOverlapSoft` | **Video Tile Merge (overlap soft)** |
 | `GetTile`           | **Get Tile** |
 | `ReferenceTileSlice`| **Reference Tile Slice** |
+| `VideoTileReferenceColorMatch` | **Video Tile Reference Color Match** |
 
 ## Nodes
 
@@ -92,6 +93,21 @@ Reconstructs the full image/video from processed tiles. **`tile_config`** is geo
 ### Reference Tile Slice
 
 Cuts the **same** spatial tiles from a reference image as your video slicer, so `ref_tiles[i]` aligns with `video_tiles[i]`. Requires `tile_config` from either slicer.
+
+### Video Tile Reference Color Match
+
+Runs **after** **Video Tile Merge**. Uses a **reference** clip (LR or pre-upscaled RGB) resized to the merged frame: Gaussian **low-frequency** color is blended toward that reference; **high-frequency** detail stays from the merged output (so LR texture is not pasted in). Defaults bias gentle cast correction and seam tint without flattening contrast.
+
+| Input / setting | Description |
+|-----------------|-------------|
+| `merged` | Merge node output (upscaled RGB). |
+| `reference` | Same shot before / without tiled upscale; batch **1** broadcasts across merged batch. |
+| `low_frequency_sigma` | Gaussian σ (pixels) for LF/HF split; **14** default; **0** ≈ no blur (full-res pull — stronger reference imprint). |
+| `color_pull` | How much LF RGB follows reference (**0.58** default). |
+| `detail_mix` | Scale of merged highs (**1** = keep merged detail). |
+| `preserve_merged_luminance` | **On** (default): per-pixel RGB scale so Rec.709 luma matches **merged** after the pull (reference brightness won’t wash the upscale). |
+| `luma_scale_clamp` | Max RGB multiplier when locking luma (**4** default; reciprocal min). |
+| `reference_resize` | **`bicubic`** / **`bilinear`** / **`area`** when upsampling reference to merged resolution. |
 
 ### Get Tile
 
