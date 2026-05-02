@@ -14,6 +14,15 @@ import math
 import torch
 import torch.nn.functional as F
 
+# F.pad / grouped conv2d on CUDA use 32-bit indexing; huge [B,H,W,C] batches exceed it.
+_MAX_ELEMENTS_PER_OP = (1 << 30)  # stay below ~2^31 total elements per tensor
+
+
+def _batch_chunk_size(height: int, width: int, channels: int = 3) -> int:
+    """Max IMAGE batch slice length so NCHW tensors stay under PyTorch index limits."""
+    per_frame = max(1, channels * height * width)
+    return max(1, _MAX_ELEMENTS_PER_OP // per_frame)
+
 
 def _scalar_float(v, default: float = 0.0) -> float:
     while isinstance(v, (list, tuple)):
@@ -80,6 +89,58 @@ def _rec709_luma(rgb: torch.Tensor) -> torch.Tensor:
         + 0.715168678767756 * g
         + 0.07219231536073371 * b
     )
+
+
+def _match_one_chunk(
+    merged_chunk: torch.Tensor,
+    ref_chunk: torch.Tensor,
+    sigma: float,
+    pull: float,
+    dmix: float,
+    lock_luma: bool,
+    clamp_lo: float,
+    clamp_hi: float,
+    mode: str,
+    dtype: torch.dtype,
+    work_dtype: torch.dtype,
+) -> torch.Tensor:
+    """merged_chunk / ref_chunk: [Nb, H, W, 3]. Returns same shape / dtype as merged_chunk."""
+    # NCHW for interpolate + blur
+    m = merged_chunk.permute(0, 3, 1, 2).contiguous()
+    r = ref_chunk.permute(0, 3, 1, 2).contiguous()
+    h, w = m.shape[2], m.shape[3]
+    if r.shape[2] != h or r.shape[3] != w:
+        if mode == "area":
+            r = F.interpolate(r, size=(h, w), mode="area")
+        else:
+            r = F.interpolate(r, size=(h, w), mode=mode, align_corners=False)
+
+    m32 = m.to(work_dtype)
+    r32 = r.to(work_dtype)
+
+    if sigma <= 0.05:
+        low_m = m32
+        low_r = r32
+    else:
+        low_m = _gaussian_blur_nchw(m32, sigma)
+        low_r = _gaussian_blur_nchw(r32, sigma)
+    high_m = m32 - low_m
+
+    low_out = (1.0 - pull) * low_m + pull * low_r
+    out = low_out + dmix * high_m
+    out = out.to(dtype=dtype)
+
+    if lock_luma:
+        merged_hwc = merged_chunk
+        out_hwc = out.permute(0, 2, 3, 1)
+        y_src = _rec709_luma(merged_hwc)
+        y_dst = _rec709_luma(out_hwc)
+        scale = y_src / (y_dst + 1e-6)
+        scale = scale.clamp(clamp_lo, clamp_hi).unsqueeze(-1)
+        out_hwc = (out_hwc * scale).clamp(0.0, 1.0)
+        out = out_hwc.permute(0, 3, 1, 2)
+
+    return out.permute(0, 2, 3, 1).contiguous()
 
 
 class VideoTileReferenceColorMatch:
@@ -169,42 +230,31 @@ class VideoTileReferenceColorMatch:
                 f"reference batch {rb} must equal merged batch {b}, or reference batch must be 1."
             )
 
-        # NCHW for interpolate + blur
-        m = merged.permute(0, 3, 1, 2).contiguous()
-        r = ref.permute(0, 3, 1, 2).contiguous()
-        if r.shape[2] != h or r.shape[3] != w:
-            if mode == "area":
-                r = F.interpolate(r, size=(h, w), mode="area")
-            else:
-                r = F.interpolate(r, size=(h, w), mode=mode, align_corners=False)
-
         work = torch.float32 if dtype in (torch.float16, torch.bfloat16) else dtype
-        m32 = m.to(work)
-        r32 = r.to(work)
-
-        if sigma <= 0.05:
-            low_m = m32
-            low_r = r32
-        else:
-            low_m = _gaussian_blur_nchw(m32, sigma)
-            low_r = _gaussian_blur_nchw(r32, sigma)
-        high_m = m32 - low_m
-
-        low_out = (1.0 - pull) * low_m + pull * low_r
-        out = low_out + dmix * high_m
-        out = out.to(dtype=dtype)
-
-        if lock_luma:
-            # Per-pixel uniform RGB scale to match merged Rec.709 luma (preserves hue).
-            merged_hwc = merged
-            out_hwc = out.permute(0, 2, 3, 1)
-            y_src = _rec709_luma(merged_hwc)
-            y_dst = _rec709_luma(out_hwc)
-            scale = y_src / (y_dst + 1e-6)
-            scale = scale.clamp(clamp_lo, clamp_hi).unsqueeze(-1)
-            out_hwc = (out_hwc * scale).clamp(0.0, 1.0)
-            out = out_hwc.permute(0, 3, 1, 2)
-
-        out = out.permute(0, 2, 3, 1).contiguous()
+        chunk = _batch_chunk_size(h, w, c)
+        parts: list[torch.Tensor] = []
+        for s in range(0, b, chunk):
+            e = min(s + chunk, b)
+            m_slice = merged[s:e]
+            if rb == 1:
+                r_slice = ref[0:1].expand(e - s, -1, -1, -1)
+            else:
+                r_slice = ref[s:e]
+            parts.append(
+                _match_one_chunk(
+                    m_slice,
+                    r_slice,
+                    sigma,
+                    pull,
+                    dmix,
+                    lock_luma,
+                    clamp_lo,
+                    clamp_hi,
+                    mode,
+                    dtype,
+                    work,
+                )
+            )
+        out = torch.cat(parts, dim=0)
         return (out,)
 

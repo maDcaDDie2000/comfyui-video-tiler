@@ -109,6 +109,8 @@ Runs **after** **Video Tile Merge**. Uses a **reference** clip (LR or pre-upscal
 | `luma_scale_clamp` | Max RGB multiplier when locking luma (**4** default; reciprocal min). |
 | `reference_resize` | **`bicubic`** / **`bilinear`** / **`area`** when upsampling reference to merged resolution. |
 
+Long IMAGE batches (many frames × large resolution) are processed in **chunks** so blur/pad stays under PyTorch’s **32-bit element limit** (~2³¹ elements per tensor).
+
 ### Get Tile
 
 Returns **one** tile by index for manual wiring or external loops.
