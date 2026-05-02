@@ -27,17 +27,32 @@ class ReferenceTileSlice:
     the video tile list so ref_tile[i] matches video_tile[i] during processing.
     """
 
+    DESCRIPTION = (
+        "Cuts the same spatial tiles from a reference frame (e.g. LR source) as your video slicer. "
+        "ref_tiles[i] aligns with video tiles[i] for conditioning or paired processing."
+    )
+
     @classmethod
     def INPUT_TYPES(cls):
         return {
             "required": {
-                "reference_image": ("IMAGE",),
-                "tile_config": ("TILE_CONFIG", {"forceInput": True}),
+                "reference_image": (
+                    "IMAGE",
+                    {"tooltip": "Reference RGB same spatial size as frames fed to the slicer (per batch row)."},
+                ),
+                "tile_config": (
+                    "TILE_CONFIG",
+                    {
+                        "forceInput": True,
+                        "tooltip": "tile_config from Video Tile Slice or Slice Fixed.",
+                    },
+                ),
             },
         }
 
     RETURN_TYPES = ("IMAGE",)
     RETURN_NAMES = ("ref_tiles",)
+    OUTPUT_TOOLTIPS = ("Reference tiles list; same length/order as main slicer tiles.",)
     OUTPUT_IS_LIST = (True,)
     FUNCTION = "slice_ref"
     CATEGORY = "Video Tiler"

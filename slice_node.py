@@ -239,21 +239,76 @@ def create_visualization(
 class VideoTileSlice:
     """Slice video/image batch into tiles with gaps and overlaps. Outputs a single tiles list (no copy)."""
 
+    DESCRIPTION = (
+        "Splits each frame into a tiles_x × tiles_y grid with gaps and overlap seam tiles. "
+        "Tiles are tensor views (memory-efficient). Feather blending is done in Video Tile Merge."
+    )
+
     @classmethod
     def INPUT_TYPES(cls):
         return {
             "required": {
-                "images": ("IMAGE",),
-                "tiles_x": ("INT", {"default": 2, "min": 1, "max": 5}),
-                "tiles_y": ("INT", {"default": 2, "min": 1, "max": 5}),
-                "multiple": ("INT", {"default": 32, "min": 1, "max": 64}),
-                "overlap_extension_x": ("INT", {"default": 128, "min": 0, "max": 4096}),
-                "overlap_extension_y": ("INT", {"default": 128, "min": 0, "max": 4096}),
+                "images": (
+                    "IMAGE",
+                    {"tooltip": "Video or image batch [B,H,W,C]. Same frame size for all batches."},
+                ),
+                "tiles_x": (
+                    "INT",
+                    {
+                        "default": 2,
+                        "min": 1,
+                        "max": 5,
+                        "tooltip": "Horizontal grid cells (1–5). Defines how many columns of normal tiles.",
+                    },
+                ),
+                "tiles_y": (
+                    "INT",
+                    {
+                        "default": 2,
+                        "min": 1,
+                        "max": 5,
+                        "tooltip": "Vertical grid cells (1–5). Defines how many rows of normal tiles.",
+                    },
+                ),
+                "multiple": (
+                    "INT",
+                    {
+                        "default": 32,
+                        "min": 1,
+                        "max": 64,
+                        "tooltip": "Snap tile sizes and overlap geometry to this pixel multiple (e.g. 8, 16, 32).",
+                    },
+                ),
+                "overlap_extension_x": (
+                    "INT",
+                    {
+                        "default": 128,
+                        "min": 0,
+                        "max": 4096,
+                        "tooltip": "Horizontal overlap seam thickness (pixels), snapped to multiple. Seam tiles blend in Merge.",
+                    },
+                ),
+                "overlap_extension_y": (
+                    "INT",
+                    {
+                        "default": 128,
+                        "min": 0,
+                        "max": 4096,
+                        "tooltip": "Vertical overlap seam thickness (pixels), snapped to multiple.",
+                    },
+                ),
             },
         }
 
     RETURN_TYPES = ("IMAGE", "TILE_CONFIG", "IMAGE", "INT", "STRING")
     RETURN_NAMES = ("tiles", "tile_config", "visualization", "tile_count", "layout_label")
+    OUTPUT_TOOLTIPS = (
+        "List of tile crops (OUTPUT_IS_LIST). Wire to processing, then Video Tile Merge tiles input.",
+        "Opaque layout tuple for Merge / Get Tile / Reference Tile Slice. Geometry only; changing Merge feather does not require re-slicing.",
+        "Two preview images: bordered layout + traversal gradient (not for final encode).",
+        "Number of tiles in the list.",
+        "Human-readable layout summary and rough memory hints.",
+    )
     OUTPUT_IS_LIST = (True, False, False, False, False)
     FUNCTION = "slice"
     CATEGORY = "Video Tiler"

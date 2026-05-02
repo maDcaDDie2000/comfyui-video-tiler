@@ -151,43 +151,87 @@ class VideoTileReferenceColorMatch:
     Defaults favour fixing overall cast / seam tint without borrowing LR texture.
     """
 
+    DESCRIPTION = (
+        "Post-merge: match large-scale color to a reference clip (LR/pre-upscale) while preserving merged detail. "
+        "Uses Gaussian low/high split; long batches are chunked for PyTorch limits."
+    )
+
     @classmethod
     def INPUT_TYPES(cls):
         return {
             "required": {
-                "merged": ("IMAGE",),
-                "reference": ("IMAGE",),
+                "merged": (
+                    "IMAGE",
+                    {"tooltip": "Video Tile Merge output [B,H,W,3]."},
+                ),
+                "reference": (
+                    "IMAGE",
+                    {
+                        "tooltip": "Same content at LR or pre-upscale resolution; resized internally. Batch 1 broadcasts to merged batch.",
+                    },
+                ),
             },
             "optional": {
                 "low_frequency_sigma": (
                     "FLOAT",
-                    {"default": 14.0, "min": 0.0, "max": 256.0, "step": 0.5},
+                    {
+                        "default": 14.0,
+                        "min": 0.0,
+                        "max": 256.0,
+                        "step": 0.5,
+                        "tooltip": "Gaussian σ (px) for LF/HF split. Higher = only broader color moves. ~0 skips blur (strong reference imprint).",
+                    },
                 ),
                 "color_pull": (
                     "FLOAT",
-                    {"default": 0.58, "min": 0.0, "max": 1.0, "step": 0.01},
+                    {
+                        "default": 0.58,
+                        "min": 0.0,
+                        "max": 1.0,
+                        "step": 0.01,
+                        "tooltip": "How much low-frequency RGB follows the reference vs merged LF.",
+                    },
                 ),
                 "detail_mix": (
                     "FLOAT",
-                    {"default": 1.0, "min": 0.0, "max": 1.0, "step": 0.01},
+                    {
+                        "default": 1.0,
+                        "min": 0.0,
+                        "max": 1.0,
+                        "step": 0.01,
+                        "tooltip": "Gain on high-frequency residual from merged (1 = keep full upscale detail).",
+                    },
                 ),
                 "preserve_merged_luminance": (
                     "BOOLEAN",
-                    {"default": True},
+                    {
+                        "default": True,
+                        "tooltip": "If true, rescale RGB after pull so Rec.709 luma matches merged (reference brightness won’t flatten scene).",
+                    },
                 ),
                 "luma_scale_clamp": (
                     "FLOAT",
-                    {"default": 4.0, "min": 1.05, "max": 10.0, "step": 0.05},
+                    {
+                        "default": 4.0,
+                        "min": 1.05,
+                        "max": 10.0,
+                        "step": 0.05,
+                        "tooltip": "Max/min multiplier when locking luma (prevents extreme corrections).",
+                    },
                 ),
                 "reference_resize": (
                     ["bicubic", "bilinear", "area"],
-                    {"default": "bicubic"},
+                    {
+                        "default": "bicubic",
+                        "tooltip": "Interpolation when upsampling reference to merged width/height.",
+                    },
                 ),
             },
         }
 
     RETURN_TYPES = ("IMAGE",)
     RETURN_NAMES = ("IMAGE",)
+    OUTPUT_TOOLTIPS = ("Color-matched IMAGE; same shape/dtype as merged input.",)
     FUNCTION = "match"
     CATEGORY = "Video Tiler"
 

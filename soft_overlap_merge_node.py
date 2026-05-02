@@ -166,12 +166,26 @@ class VideoTileMergeOverlapSoft:
     Same wiring as **Video Tile Merge**; symmetric weighted sums using shared feather geometry.
     """
 
+    DESCRIPTION = (
+        "Alternative merge: always uses weighted sum of geometry feather weights (symmetric overlap blend). "
+        "Same inputs as Video Tile Merge; good when you want normalized averaging instead of alpha-over paint order."
+    )
+
     @classmethod
     def INPUT_TYPES(cls):
         return {
             "required": {
-                "tile_config": ("TILE_CONFIG", {"forceInput": True}),
-                "tiles": ("IMAGE",),
+                "tile_config": (
+                    "TILE_CONFIG",
+                    {
+                        "forceInput": True,
+                        "tooltip": "TILE_CONFIG from the matching slicer.",
+                    },
+                ),
+                "tiles": (
+                    "IMAGE",
+                    {"tooltip": "Processed tiles as list (INPUT_IS_LIST)."},
+                ),
                 "feather": (
                     "FLOAT",
                     {
@@ -179,6 +193,7 @@ class VideoTileMergeOverlapSoft:
                         "min": 0.0,
                         "max": 0.5,
                         "step": 0.005,
+                        "tooltip": "Feather fraction (same interpretation as Video Tile Merge). Drives soft overlap weights.",
                     },
                 ),
             },
@@ -187,6 +202,7 @@ class VideoTileMergeOverlapSoft:
     INPUT_IS_LIST = (False, True)
     RETURN_TYPES = ("IMAGE",)
     RETURN_NAMES = ("IMAGE",)
+    OUTPUT_TOOLTIPS = ("Weighted-average merged IMAGE.",)
     FUNCTION = "merge"
     CATEGORY = "Video Tiler"
 

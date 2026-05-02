@@ -75,18 +75,45 @@ class GetTile:
     One tile by index. Wire either the **full** IMAGE into `images`, or the slicer **`tiles`** list.
     """
 
+    DESCRIPTION = (
+        "Extract a single tile by index for manual branches. "
+        "Accepts either the full-frame IMAGE + tile_config or the slicer tiles list (list execution)."
+    )
+
     @classmethod
     def INPUT_TYPES(cls):
         return {
             "required": {
-                "images": ("IMAGE",),
-                "tile_config": ("TILE_CONFIG", {"forceInput": True}),
-                "tile_index": ("INT", {"default": 0, "min": 0, "max": 999}),
+                "images": (
+                    "IMAGE",
+                    {"tooltip": "Full frame [B,H,W,C] or slicer tiles output (list); INPUT_IS_LIST unwraps list context."},
+                ),
+                "tile_config": (
+                    "TILE_CONFIG",
+                    {
+                        "forceInput": True,
+                        "tooltip": "Layout from Video Tile Slice / Slice Fixed.",
+                    },
+                ),
+                "tile_index": (
+                    "INT",
+                    {
+                        "default": 0,
+                        "min": 0,
+                        "max": 999,
+                        "tooltip": "Zero-based tile index; clamped to valid range.",
+                    },
+                ),
             },
         }
 
     RETURN_TYPES = ("IMAGE", "INT", "TILE_CONFIG")
     RETURN_NAMES = ("tile", "tile_index", "tile_config")
+    OUTPUT_TOOLTIPS = (
+        "Single tile crop [B,h,w,C], contiguous.",
+        "Resolved index after clamping.",
+        "Same TILE_CONFIG passthrough for downstream.",
+    )
     INPUT_IS_LIST = (True, False, False)
     FUNCTION = "get_tile"
     CATEGORY = "Video Tiler"

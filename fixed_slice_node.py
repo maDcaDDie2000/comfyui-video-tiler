@@ -63,27 +63,74 @@ def _parse_overlap(label: str) -> tuple[int, int]:
 class VideoTileSliceFixed:
     """Fixed tile size, fractional overlap, row/column/spiral/double-spiral order."""
 
+    DESCRIPTION = (
+        "Fixed-width/height tiles with fractional minimum overlap and traversal pattern. "
+        "Emits the same sockets as the variable grid slicer; TILE_CONFIG is v5 (Merge applies feather)."
+    )
+
     @classmethod
     def INPUT_TYPES(cls):
         return {
             "required": {
-                "images": ("IMAGE",),
-                "tile_width": ("INT", {"default": 512, "min": 64, "max": 8192, "step": 8}),
-                "tile_height": ("INT", {"default": 512, "min": 64, "max": 8192, "step": 8}),
-                "multiple": ("INT", {"default": 32, "min": 1, "max": 64}),
+                "images": (
+                    "IMAGE",
+                    {"tooltip": "Video or image batch [B,H,W,C]."},
+                ),
+                "tile_width": (
+                    "INT",
+                    {
+                        "default": 512,
+                        "min": 64,
+                        "max": 8192,
+                        "step": 8,
+                        "tooltip": "Tile width in pixels (step 8).",
+                    },
+                ),
+                "tile_height": (
+                    "INT",
+                    {
+                        "default": 512,
+                        "min": 64,
+                        "max": 8192,
+                        "step": 8,
+                        "tooltip": "Tile height in pixels (step 8).",
+                    },
+                ),
+                "multiple": (
+                    "INT",
+                    {
+                        "default": 32,
+                        "min": 1,
+                        "max": 64,
+                        "tooltip": "Stride/overlap positions snap to this pixel grid.",
+                    },
+                ),
                 "overlap": (
                     ["1/8", "1/4", "3/8", "1/2"],
-                    {"default": "1/4"},
+                    {
+                        "default": "1/4",
+                        "tooltip": "Minimum neighbour overlap as a fraction of tile width/height per axis (layout chooses fewest tiles that satisfy it).",
+                    },
                 ),
                 "pattern": (
                     ["row", "column", "spiral", "double_spiral"],
-                    {"default": "row"},
+                    {
+                        "default": "row",
+                        "tooltip": "Tile visitation order (affects traversal viz and merge paint order for overlaps).",
+                    },
                 ),
             },
         }
 
     RETURN_TYPES = ("IMAGE", "TILE_CONFIG", "IMAGE", "INT", "STRING")
     RETURN_NAMES = ("tiles", "tile_config", "visualization", "tile_count", "layout_label")
+    OUTPUT_TOOLTIPS = (
+        "Tile list for list-mode processing → Video Tile Merge.",
+        "TILE_CONFIG v5 for Merge / Get Tile / Reference Tile Slice.",
+        "Preview: labels + traversal gradient (not final output).",
+        "Tile count.",
+        "Layout string + memory hints.",
+    )
     OUTPUT_IS_LIST = (True, False, False, False, False)
     FUNCTION = "slice_fixed"
     CATEGORY = "Video Tiler"

@@ -409,12 +409,26 @@ class VideoTileMerge:
     **Optional** — **feather_curve**, **blend_mode** (defaults keep legacy behavior if widgets absent).
     """
 
+    DESCRIPTION = (
+        "Rebuilds full-resolution IMAGE from processed tiles using tile_config geometry. "
+        "Feather controls overlap seam blend width; optional weighted_average averages overlaps symmetrically."
+    )
+
     @classmethod
     def INPUT_TYPES(cls):
         return {
             "required": {
-                "tile_config": ("TILE_CONFIG", {"forceInput": True}),
-                "tiles": ("IMAGE",),
+                "tile_config": (
+                    "TILE_CONFIG",
+                    {
+                        "forceInput": True,
+                        "tooltip": "Same TILE_CONFIG from the slicer that produced the tiles (version v3–v5 supported).",
+                    },
+                ),
+                "tiles": (
+                    "IMAGE",
+                    {"tooltip": "Processed tile batch list (INPUT_IS_LIST). Same order as slicer tile list."},
+                ),
                 "feather": (
                     "FLOAT",
                     {
@@ -422,17 +436,24 @@ class VideoTileMerge:
                         "min": 0.0,
                         "max": 0.5,
                         "step": 0.005,
+                        "tooltip": "0–0.5: fraction of local tile width (horizontal ramps) and height (vertical ramps). Hard cap 50% per axis.",
                     },
                 ),
             },
             "optional": {
                 "feather_curve": (
                     ["linear", "ease_in", "ease_out", "ease_in_out"],
-                    {"default": "linear"},
+                    {
+                        "default": "linear",
+                        "tooltip": "Remaps geometric seam alpha (linear default). Easing reshapes only the mask, not tile positions.",
+                    },
                 ),
                 "blend_mode": (
                     ["alpha_over", "weighted_average"],
-                    {"default": "alpha_over"},
+                    {
+                        "default": "alpha_over",
+                        "tooltip": "alpha_over: painter order + coverage gate. weighted_average: sum(weight×color)/sum(weight) with same geometry weights.",
+                    },
                 ),
             },
         }
@@ -440,6 +461,7 @@ class VideoTileMerge:
     INPUT_IS_LIST = (False, True)
     RETURN_TYPES = ("IMAGE",)
     RETURN_NAMES = ("IMAGE",)
+    OUTPUT_TOOLTIPS = ("Merged full frame batch [B,H,W,C]. Wire to preview, encode, or Reference Color Match.",)
     FUNCTION = "merge"
     CATEGORY = "Video Tiler"
 
