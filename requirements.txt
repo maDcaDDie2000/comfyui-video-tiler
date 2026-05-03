@@ -1,2 +1,4 @@
 # ComfyUI Video Tiler - No extra dependencies required
-# Uses PyTorch (already provided by ComfyUI)
+# Uses PyTorch + NumPy (already provided by ComfyUI)
+#
+# Video Tile Audio (FFprobe LTX): install FFmpeg and ensure `ffprobe` is on PATH.

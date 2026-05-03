@@ -37,6 +37,7 @@ Restart ComfyUI. Nodes appear under category **Video Tiler** with these display 
 | `GetTile`           | **Get Tile** |
 | `ReferenceTileSlice`| **Reference Tile Slice** |
 | `VideoTileReferenceColorMatch` | **Video Tile Reference Color Match** |
+| `VideoTileAudioFFprobeLTX` | **Video Tile Audio (FFprobe LTX)** |
 
 ## Nodes
 
@@ -110,6 +111,21 @@ Runs **after** **Video Tile Merge**. Uses a **reference** clip (LR or pre-upscal
 | `reference_resize` | **`bicubic`** / **`bilinear`** / **`area`** when upsampling reference to merged resolution. |
 
 Long IMAGE batches (many frames × large resolution) are processed in **chunks** so blur/pad stays under PyTorch’s **32-bit element limit** (~2³¹ elements per tensor).
+
+### Video Tile Audio (FFprobe LTX)
+
+Runs **`ffprobe`** (must be on **PATH**, from FFmpeg) on your **`AUDIO`** before **`LTXVAudioVAEEncode`**.
+
+| Input / setting | Description |
+|-----------------|-------------|
+| `audio` | Standard Comfy **`AUDIO`** dict (`waveform` `[B,C,T]`, `sample_rate`). If keys like **`filename`** / **`path`** resolve to a real file, that file is probed; otherwise a **temporary PCM WAV** is written from the tensor and probed. |
+| `require_linear_pcm` | **Off** by default; enable to reject containers/codecs other than **`pcm_*`** / **flac** (e.g. block **mp3**/**aac** at probe stage). |
+| `strict_sample_rate` | Require **`sample_rate`** from ffprobe to equal **`target_sample_rate`** (**44100** default target when strict). |
+| `min_sample_rate` | Reject streams reported below this Hz (**16000** default). |
+
+**Output:** **`ok`** (`BOOLEAN`). Also prints **`OK`** / **`FAIL`** and reason to the console.
+
+Checks include: waveform finite values; **1–2 channels**; non‑zero duration; audio stream present. **Strict codec/sample-rate checks are optional** — Comfy’s encoder often **resamples** anyway; use toggles to mirror how picky you want to be.
 
 ### Get Tile
 
