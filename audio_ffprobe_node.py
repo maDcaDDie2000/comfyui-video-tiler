@@ -128,7 +128,7 @@ def _ffprobe_json(path: str) -> dict | None:
         "-select_streams",
         "a:0",
         "-show_entries",
-        "stream=codec_type,codec_name,sample_rate,channels",
+        "stream=codec_type,codec_name,sample_rate,channels,duration",
         "-show_entries",
         "format=duration",
         "-of",
@@ -184,7 +184,8 @@ class VideoTileAudioFFprobeLTX:
 
     DESCRIPTION = (
         "Uses ffprobe (FFmpeg) to verify an AUDIO dict maps to a sane waveform for LTX 2.3 Audio VAE: "
-        "audio stream present, duration > 0, 1–2 channels, plausible sample rate. "
+        "audio stream present, 1–2 channels, plausible sample rate. "
+        "Duration may be missing for some MP3/VBR files in ffprobe metadata — then the decoded waveform length is used. "
         "Optional strict sample-rate and linear-PCM-only modes."
     )
 
@@ -310,12 +311,18 @@ class VideoTileAudioFFprobeLTX:
                     return _fail(f"codec {codec!r} is not linear PCM/flac")
 
             ch = _parse_int(st0.get("channels"))
-            if ch is None or ch not in (1, 2):
-                return _fail(f"channels must be 1 or 2, ffprobe reports {st0.get('channels')}")
+            if ch is None:
+                ch = int(c)
 
             r_hz = _parse_int(st0.get("sample_rate"))
+            if r_hz is None:
+                r_hz = sr_int
+
+            if ch not in (1, 2):
+                return _fail(f"channels must be 1 or 2, ffprobe/tensor reports {ch}")
+
             if r_hz is None or r_hz < min_sr:
-                return _fail(f"sample_rate too low or missing ({st0.get('sample_rate')})")
+                return _fail(f"sample_rate too low or missing ({st0.get('sample_rate')!r} / tensor context {sr_int})")
 
             if strict_sr and r_hz != tgt_sr:
                 return _fail(f"sample_rate {r_hz} != target {tgt_sr}")
@@ -323,12 +330,17 @@ class VideoTileAudioFFprobeLTX:
             dur_stream = _parse_positive_float(st0.get("duration"))
             fmt = data.get("format") or {}
             dur_fmt = _parse_positive_float(fmt.get("duration"))
-            if dur_stream is None and dur_fmt is None:
-                return _fail("zero / unknown duration")
+            dur_probe = dur_stream if dur_stream is not None else dur_fmt
+            dur_wave = float(t) / float(sr_int) if sr_int > 0 else 0.0
+            has_dur = (dur_probe is not None and dur_probe > 1e-6) or dur_wave > 1e-6
+            if not has_dur:
+                return _fail("zero duration (ffprobe stream/format missing duration, common for some MP3; waveform length also zero)")
 
+            dur_show = dur_probe if dur_probe is not None and dur_probe > 1e-6 else dur_wave
             print(
                 f"[Video Tiler] Audio FFprobe (LTX): OK — codec={codec}, {r_hz} Hz, ch={ch}, "
-                f"dur≈{dur_fmt or dur_stream:.3f}s"
+                f"dur≈{dur_show:.3f}s"
+                + (" (from waveform; ffprobe omitted duration)" if dur_probe is None or dur_probe <= 1e-6 else "")
             )
             return (True,)
         finally:

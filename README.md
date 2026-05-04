@@ -125,7 +125,7 @@ Runs **`ffprobe`** (must be on **PATH**, from FFmpeg) on your **`AUDIO`** before
 
 **Output:** **`ok`** (`BOOLEAN`). Also prints **`OK`** / **`FAIL`** and reason to the console.
 
-Checks include: waveform finite values; **1–2 channels**; non‑zero duration; audio stream present. **Strict codec/sample-rate checks are optional** — Comfy’s encoder often **resamples** anyway; use toggles to mirror how picky you want to be.
+Checks include: waveform finite values; **1–2 channels**; non‑zero duration (ffprobe **or** decoded waveform length — **MP3/VBR often omit duration** in ffprobe metadata); audio stream present. If ffprobe omits **`channels`** / **`sample_rate`**, values from the **`AUDIO`** tensor metadata are used when possible. **Strict codec/sample-rate checks are optional** — Comfy’s encoder often **resamples** anyway; use toggles to mirror how picky you want to be.
 
 ### Get Tile
 
