@@ -27,7 +27,7 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "GetTile": "Get Tile",
     "ReferenceTileSlice": "Reference Tile Slice",
     "VideoTileReferenceColorMatch": "Video Tile Reference Color Match",
-    "VideoTileAudioFFprobeLTX": "Video Tile Audio (FFprobe LTX)",
+    "VideoTileAudioFFprobeLTX": "Video Tile Audio Present",
 }
 
 __all__ = ["NODE_CLASS_MAPPINGS", "NODE_DISPLAY_NAME_MAPPINGS"]
