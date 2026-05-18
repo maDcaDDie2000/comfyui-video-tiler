@@ -118,19 +118,19 @@ One job only: **True** when the **`AUDIO`** bundle looks like real clip audio fr
 
 | Step | Behavior |
 |------|----------|
-| File path | If the dict exposes a resolvable path (`filename`, `path`, etc.), **`ffprobe`** must report **≥ 1 audio stream**. Video‑only files → **False**. |
-| Waveform | Peak absolute sample must be **≥ `min_peak`** (default **1e‑6**). Flatlined / silent buffers → **False**. |
+| File path | If the dict exposes a resolvable path, **`ffprobe`** **≥ 1 audio stream** ⇒ passes stream gate; **0 streams** (video‑only) ⇒ **False**. If ffprobe is missing or errors ⇒ **warning**, gate skipped — decision falls back to waveform only (your MP3 is **not** rejected just because ffprobe failed). |
+| Waveform | **Non‑silent:** **`min_peak` = 0** uses automatic peak/RMS floors; **`min_peak` > 0** applies your cutoff plus an RMS helper. |
 
-If there is **no path** in the dict, only the waveform test runs (ffprobe cannot see the container).
+The dict is scanned for path‑like strings ending in `.mp3`, `.wav`, `.mp4`, etc., not only fixed keys.
 
-**Requires `ffprobe` on PATH** when a path is present; otherwise the node fails closed (**False**).
+**Tensor layout:** `[B, C, T]` and obvious **`[B, T, C]`** (small channel dim) are both accepted.
 
 | Input | Description |
 |-------|-------------|
-| `audio` | **`AUDIO`** from Load Video / VHS. |
-| `min_peak` | Silence cutoff on decoded amplitude (typical Comfy range ~[-1, 1]). |
+| `audio` | **`AUDIO`** from Load Video / Load Audio / VHS. |
+| `min_peak` | **0** = auto silence detection; increase only if you need stricter silence rejection. |
 
-**Output:** **`has_audio`** (`BOOLEAN`). Console prints **`TRUE` / `FALSE`** and a short reason.
+**Output:** **`has_audio`**. Console shows **`peak`**, **`rms`**, and whether ffprobe confirmed streams.
 
 ### Get Tile
 

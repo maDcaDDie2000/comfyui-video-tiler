@@ -1,11 +1,10 @@
 """
-Detect real audio vs silent placeholder from Load Video / AUDIO wiring.
+Detect real audio vs silent placeholder from Load Video / Load Audio.
 
-If the AUDIO dict resolves to a media file path, ffprobe checks that an audio stream
-exists. Always checks that the decoded waveform peak exceeds a tiny threshold so
-silent filler tensors read as absent.
+When a file path is known: ffprobe counts audio streams — zero streams ⇒ FALSE.
+If ffprobe is missing or errors, falls back to waveform only (does not treat as FALSE).
 
-Requires **ffprobe** on PATH only when a filepath can be resolved from the dict.
+Waveform: detects silence via peak or RMS; accepts common tensor layouts [B,C,T] vs [B,T,C].
 """
 
 from __future__ import annotations
@@ -19,6 +18,22 @@ import sys
 import torch
 
 logger = logging.getLogger(__name__)
+
+_MEDIA_EXTS = (
+    ".mp3",
+    ".wav",
+    ".flac",
+    ".ogg",
+    ".m4a",
+    ".aac",
+    ".opus",
+    ".wma",
+    ".mp4",
+    ".mkv",
+    ".webm",
+    ".mov",
+    ".avi",
+)
 
 
 def _unwrap_audio(audio):
@@ -43,10 +58,30 @@ def _resolve_filepath(raw: str | None) -> str | None:
     return None
 
 
+def _looks_media_path(s: str) -> bool:
+    low = s.strip().lower()
+    return any(low.endswith(ext) for ext in _MEDIA_EXTS)
+
+
 def _path_from_audio_dict(d: dict) -> str | None:
-    for key in ("filename", "path", "file", "filepath", "audio_file", "full_path"):
+    for key in (
+        "filename",
+        "path",
+        "file",
+        "filepath",
+        "audio_file",
+        "full_path",
+        "loaded_path",
+        "source",
+        "audio_path",
+    ):
         v = d.get(key)
         if isinstance(v, str):
+            hit = _resolve_filepath(v)
+            if hit:
+                return hit
+    for _k, v in d.items():
+        if isinstance(v, str) and _looks_media_path(v):
             hit = _resolve_filepath(v)
             if hit:
                 return hit
@@ -54,7 +89,7 @@ def _path_from_audio_dict(d: dict) -> str | None:
 
 
 def _ffprobe_audio_stream_count(path: str) -> int | None:
-    """Return number of audio streams, or None if ffprobe failed."""
+    """Return number of audio streams, or None if ffprobe failed (caller may fallback)."""
     cmd = [
         "ffprobe",
         "-v",
@@ -78,10 +113,7 @@ def _ffprobe_audio_stream_count(path: str) -> int | None:
             kwargs["creationflags"] = cnw
     try:
         proc = subprocess.run(cmd, check=False, **kwargs)
-    except FileNotFoundError:
-        logger.warning("[Video Tiler] ffprobe not found on PATH")
-        return None
-    except subprocess.TimeoutExpired:
+    except (FileNotFoundError, subprocess.TimeoutExpired):
         return None
     if proc.returncode != 0:
         return None
@@ -91,6 +123,21 @@ def _ffprobe_audio_stream_count(path: str) -> int | None:
         return None
     streams = data.get("streams") or []
     return len(streams)
+
+
+def _normalize_bct(wf: torch.Tensor) -> torch.Tensor:
+    """Force [B, C, T] when obvious; torchaudio/VHS sometimes differs."""
+    if wf.dim() == 2:
+        return wf.unsqueeze(0)
+    if wf.dim() != 3:
+        return wf
+    _b, d1, d2 = wf.shape
+    # Typical: C is 1–16, T is thousands+
+    if d1 <= 16 and d2 > max(64, d1 * 32):
+        return wf
+    if d2 <= 16 and d1 > max(64, d2 * 32):
+        return wf.permute(0, 2, 1)
+    return wf
 
 
 def _scalar_float(v, default: float) -> float:
@@ -104,16 +151,29 @@ def _scalar_float(v, default: float) -> float:
         return default
 
 
+def _waveform_has_energy(wf: torch.Tensor, min_peak: float) -> tuple[bool, float, float]:
+    """peak and RMS in float32 over full tensor."""
+    x = wf.detach().float().reshape(-1)
+    if x.numel() == 0:
+        return False, 0.0, 0.0
+    peak = float(x.abs().max().cpu())
+    rms = float(torch.sqrt(torch.mean(x * x)).cpu())
+    if min_peak > 0:
+        loud = peak >= min_peak or rms >= (min_peak * 0.01)
+    else:
+        # Auto: reject obvious flatlines; keep permissive for normal decoded audio
+        loud = peak > 1e-14 or rms > 1e-16
+    return loud, peak, rms
+
+
 class VideoTileAudioFFprobeLTX:
     """
-    True only when the clip appears to have real audio: optional ffprobe confirms an
-    audio stream on the source file (when path known), and waveform peak is above threshold.
+    True when media has an audio stream (if ffprobe can run) and waveform is not silent.
     """
 
     DESCRIPTION = (
-        "Single-purpose: True if Load Video (or similar) actually carried audio — "
-        "ffprobe finds an audio stream when a file path is present, and the waveform is not silent. "
-        "False for video-without-audio placeholders or flatlined buffers."
+        "True if clip has real audio: ffprobe reports ≥1 audio stream when file path is known "
+        "(ffprobe errors fall back to waveform-only); waveform peak/RMS above silence floor."
     )
 
     @classmethod
@@ -123,7 +183,7 @@ class VideoTileAudioFFprobeLTX:
                 "audio": (
                     "AUDIO",
                     {
-                        "tooltip": "Output from Load Video / VHS. Checks file path (if any) for an audio stream, then non-silent waveform.",
+                        "tooltip": "Load Video / Load Audio output. Optional path in dict → ffprobe stream count; always checks waveform energy.",
                     },
                 ),
             },
@@ -131,11 +191,11 @@ class VideoTileAudioFFprobeLTX:
                 "min_peak": (
                     "FLOAT",
                     {
-                        "default": 1e-6,
+                        "default": 0.0,
                         "min": 0.0,
                         "max": 1.0,
-                        "step": 1e-9,
-                        "tooltip": "Peak |sample| below this counts as silent (Comfy audio is typically ~[-1, 1]).",
+                        "step": 1e-12,
+                        "tooltip": "Silence floor on |sample|. Use 0 for auto (~1e-12 effective via RMS branch).",
                     },
                 ),
             },
@@ -143,12 +203,12 @@ class VideoTileAudioFFprobeLTX:
 
     RETURN_TYPES = ("BOOLEAN",)
     RETURN_NAMES = ("has_audio",)
-    OUTPUT_TOOLTIPS = ("True if an audio stream exists (when path known) and waveform is not silent.",)
+    OUTPUT_TOOLTIPS = ("True if audio stream exists when probed and waveform is not silent.",)
     FUNCTION = "probe"
     CATEGORY = "Video Tiler"
 
-    def probe(self, audio, min_peak=1e-6):
-        thresh = max(0.0, _scalar_float(min_peak, 1e-6))
+    def probe(self, audio, min_peak=0.0):
+        thresh = max(0.0, _scalar_float(min_peak, 0.0))
 
         def _fail(msg: str):
             print(f"[Video Tiler] Audio present check: FALSE — {msg}")
@@ -169,21 +229,33 @@ class VideoTileAudioFFprobeLTX:
         if wf.numel() == 0:
             return _fail("empty waveform")
 
+        wf = _normalize_bct(wf)
         if wf.dim() != 3:
-            return _fail(f"expected waveform [B,C,T], got {tuple(wf.shape)}")
+            return _fail(f"unsupported waveform rank {wf.dim()}, shape {tuple(wf.shape)}")
+
+        loud, peak, rms = _waveform_has_energy(wf, thresh)
 
         path = _path_from_audio_dict(audio)
+        stream_checked = False
         if path:
             n_audio = _ffprobe_audio_stream_count(path)
             if n_audio is None:
-                return _fail("ffprobe failed or missing from PATH (cannot verify stream on file)")
-            if n_audio < 1:
-                return _fail("no audio stream in media file (video-only or silent container as reported by ffprobe)")
+                print(
+                    "[Video Tiler] Audio present check: ffprobe unavailable or failed — "
+                    "using waveform-only (install FFmpeg on PATH for stream detection)"
+                )
+            else:
+                stream_checked = True
+                if n_audio < 1:
+                    return _fail(f"no audio stream in file (ffprobe): {path}")
 
-        peak = float(wf.detach().abs().max().cpu())
-        if peak < thresh:
-            return _fail(f"waveform silent or placeholder (peak {peak:g} < min_peak {thresh:g})")
+        if not loud:
+            hint = f"min_peak={thresh:g}" if thresh > 0 else "auto floor"
+            return _fail(f"silent / placeholder waveform (peak={peak:g}, rms={rms:g}; {hint})")
 
+        detail = f"peak={peak:g}, rms={rms:g}"
+        if stream_checked:
+            return _ok(f"audio stream OK + {detail}")
         if path:
-            return _ok(f"audio stream present + peak {peak:g}")
-        return _ok(f"non-silent waveform (peak {peak:g}); no file path — stream count not checked")
+            return _ok(f"{detail} (ffprobe skipped; path={path})")
+        return _ok(f"{detail} (no media path in dict — ffprobe stream check skipped)")
