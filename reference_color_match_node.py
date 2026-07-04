@@ -63,18 +63,19 @@ def _gaussian_blur_nchw(x: torch.Tensor, sigma: float) -> torch.Tensor:
     sigma = float(max(sigma, 1e-3))
     radius = max(1, int(math.ceil(3 * sigma)))
     device, dtype = x.device, x.dtype
+    _, c, h, w = x.shape
+    pad_mode = "reflect" if radius < h and radius < w else "replicate"
     xs = torch.arange(-radius, radius + 1, device=device, dtype=dtype)
     k1d = torch.exp(-0.5 * (xs / sigma) ** 2)
     k1d = k1d / k1d.sum()
     k_len = k1d.numel()
 
-    _, c, _, _ = x.shape
     # F.pad on NCHW: (pad_left, pad_right, pad_top, pad_bottom) for last two dims (W, H).
     k_vert = k1d.view(1, 1, k_len, 1).expand(c, 1, k_len, 1)
-    x = F.pad(x, (0, 0, radius, radius), mode="reflect")
+    x = F.pad(x, (0, 0, radius, radius), mode=pad_mode)
     x = F.conv2d(x, k_vert, groups=c)
     k_hor = k1d.view(1, 1, 1, k_len).expand(c, 1, 1, k_len)
-    x = F.pad(x, (radius, radius, 0, 0), mode="reflect")
+    x = F.pad(x, (radius, radius, 0, 0), mode=pad_mode)
     x = F.conv2d(x, k_hor, groups=c)
     return x
 

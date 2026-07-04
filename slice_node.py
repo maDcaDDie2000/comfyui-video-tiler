@@ -350,7 +350,7 @@ class VideoTileSlice:
             overlap_extension_x, overlap_extension_y,
         )
         layout_full = combine_layout_and_memory(layout_core, mem_est)
-        print(f"[Video Tiler] Slice: {W}x{H} → {len(tiles)} tiles ({tiles_x}x{tiles_y} grid)")
+        print(f"[Video Tiler] Slice: {W}x{H} -> {len(tiles)} tiles ({tiles_x}x{tiles_y} grid)")
         print(mem_est)
 
         return (tile_tensors, config_tuple, viz, len(tile_tensors), layout_full)

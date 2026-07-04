@@ -13,9 +13,11 @@ from .merge_node import (
     _fixed_tile_top_alpha,
     _normalize_tile,
     _scalar_float,
+    _device_mode_keyword,
+    _select_merge_device,
     _strip_fraction,
 )
-from .tile_config import parse_tile_config
+from .tile_config import parse_tile_config, unwrap_tile_config
 
 
 def _weighted_accum_region(
@@ -32,16 +34,18 @@ def _weighted_accum_region(
     dev = num.device
     wt = weight_hw.to(device=dev, dtype=torch.float32).clamp(min=1e-6, max=1.0)
     wt4 = wt.unsqueeze(0).unsqueeze(-1).expand(B, h, w, C)
-    tf = tile.float()
+    tf = tile.to(device=dev, dtype=torch.float32)
     num[:, y : y + h, x : x + w, :] += tf * wt4
-    den[:, y : y + h, x : x + w] += wt.unsqueeze(0).expand(B, h, w)
+    den[:, y : y + h, x : x + w] += wt.unsqueeze(0)
 
 
 def _merge_fixed_soft(
     tiles: list[torch.Tensor],
     config_tuple: tuple,
     feather: float,
+    merge_device: str = "auto",
 ) -> torch.Tensor:
+    config_tuple = unwrap_tile_config(config_tuple)
     v = config_tuple[0]
     if v == 5:
         (
@@ -81,12 +85,7 @@ def _merge_fixed_soft(
     if len(first.shape) < 4:
         raise ValueError(f"Tile shape {first.shape} - expected (B,H,W,C)")
     B, C = first.shape[0], first.shape[3]
-    if first.is_cuda:
-        dev = first.device
-    elif torch.cuda.is_available():
-        dev = torch.device("cuda:0")
-    else:
-        dev = first.device
+    dev = _select_merge_device(first, None, merge_device)
 
     _, _, _, tile_specs = parse_tile_config(config_tuple)
     num = torch.zeros((B, height, width, C), dtype=torch.float32, device=dev)
@@ -113,7 +112,9 @@ def _merge_grid_soft(
     tiles: list[torch.Tensor],
     config_tuple: tuple,
     feather: float,
+    merge_device: str = "auto",
 ) -> torch.Tensor:
+    config_tuple = unwrap_tile_config(config_tuple)
     width, height, _multiple, tile_specs = parse_tile_config(config_tuple)
     tiles_list = [_normalize_tile(t) for t in tiles]
     if not tiles_list:
@@ -123,12 +124,7 @@ def _merge_grid_soft(
         raise ValueError(f"Tile shape {first.shape} - expected (B,H,W,C)")
     B, C = first.shape[0], first.shape[3]
 
-    if first.is_cuda:
-        device = first.device
-    elif torch.cuda.is_available():
-        device = torch.device("cuda:0")
-    else:
-        device = first.device
+    device = _select_merge_device(first, None, merge_device)
 
     num = torch.zeros((B, height, width, C), dtype=torch.float32, device=device)
     den = torch.zeros((B, height, width), dtype=torch.float32, device=device)
@@ -154,11 +150,13 @@ def merge_soft_overlap(
     tiles: list[torch.Tensor],
     config_tuple: tuple,
     feather: float,
+    merge_device: str = "auto",
 ) -> torch.Tensor:
+    config_tuple = unwrap_tile_config(config_tuple)
     ver = config_tuple[0]
     if ver in (3, 5):
-        return _merge_fixed_soft(tiles, config_tuple, feather)
-    return _merge_grid_soft(tiles, config_tuple, feather)
+        return _merge_fixed_soft(tiles, config_tuple, feather, merge_device=merge_device)
+    return _merge_grid_soft(tiles, config_tuple, feather, merge_device=merge_device)
 
 
 class VideoTileMergeOverlapSoft:
@@ -196,6 +194,13 @@ class VideoTileMergeOverlapSoft:
                         "tooltip": "Feather fraction (same interpretation as Video Tile Merge). Drives soft overlap weights.",
                     },
                 ),
+                "merge_device": (
+                    ["auto", "cpu", "cuda"],
+                    {
+                        "default": "auto",
+                        "tooltip": "auto keeps the first tile device. cpu uses system RAM for merge/output; cuda uses VRAM when available.",
+                    },
+                ),
             },
         }
 
@@ -206,14 +211,14 @@ class VideoTileMergeOverlapSoft:
     FUNCTION = "merge"
     CATEGORY = "Video Tiler"
 
-    def merge(self, tile_config, tiles, feather):
-        if isinstance(tile_config, (list, tuple)) and len(tile_config) > 0:
-            tile_config = tile_config[0]
+    def merge(self, tile_config, tiles, feather, merge_device=None):
+        tile_config = unwrap_tile_config(tile_config)
         feather = _scalar_float(feather)
+        dev_mode = _device_mode_keyword(merge_device)
         if isinstance(tiles, (list, tuple)):
             tiles_list = list(tiles)
         else:
             tiles_list = [tiles]
-        print(f"[Video Tiler] Overlap-soft merging {len(tiles_list)} tiles → single IMAGE batch")
-        result = merge_soft_overlap(tiles_list, tile_config, feather)
+        print(f"[Video Tiler] Overlap-soft merging {len(tiles_list)} tiles -> single IMAGE batch (device={dev_mode})")
+        result = merge_soft_overlap(tiles_list, tile_config, feather, merge_device=dev_mode)
         return (result,)

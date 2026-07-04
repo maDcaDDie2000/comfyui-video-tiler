@@ -12,6 +12,31 @@ from typing import Any
 from .layout import TileSpec, compute_layout
 
 
+TILE_CONFIG_VERSIONS = {1, 2, 3, 4, 5}
+
+
+def is_tile_config_tuple(value: Any) -> bool:
+    """Return True for the actual TILE_CONFIG payload, not a list wrapper around it."""
+    return (
+        isinstance(value, (list, tuple))
+        and len(value) > 0
+        and isinstance(value[0], int)
+        and value[0] in TILE_CONFIG_VERSIONS
+    )
+
+
+def unwrap_tile_config(value: Any) -> tuple[Any, ...]:
+    """Accept direct TILE_CONFIG tuples and ComfyUI single-item list wrappers."""
+    while isinstance(value, (list, tuple)) and len(value) == 1 and not is_tile_config_tuple(value):
+        value = value[0]
+    if not is_tile_config_tuple(value):
+        raise ValueError(
+            "tile_config must be TILE_CONFIG from Video Tile Slice / Slice Fixed "
+            "(version 1-5 tuple)."
+        )
+    return tuple(value)
+
+
 def create_tile_config(
     width: int,
     height: int,
@@ -72,6 +97,7 @@ def parse_tile_config(config_tuple: tuple[Any, ...]) -> tuple[int, int, int, lis
     v4: grid seams. v5: fixed tiles (blur from merge). v3: fixed with blur in tuple (legacy).
     v1–v2: grid with legacy feather slot in tuple (ignored — use merge feather).
     """
+    config_tuple = unwrap_tile_config(config_tuple)
     version = config_tuple[0]
     if version == 5:
         (

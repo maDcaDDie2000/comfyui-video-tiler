@@ -171,7 +171,7 @@ class VideoTileSliceFixed:
         info_lines = layout_core.split("\n")
         viz = _build_fixed_visualization(W, H, tiles, info_lines)
 
-        print(f"[Video Tiler] Fixed slice: {W}x{H} → {len(tiles)} tiles ({pattern})")
+        print(f"[Video Tiler] Fixed slice: {W}x{H} -> {len(tiles)} tiles ({pattern})")
         print(mem_est)
 
         return (tile_tensors, config_tuple, viz, len(tile_tensors), layout_full)

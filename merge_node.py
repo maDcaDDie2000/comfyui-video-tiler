@@ -20,7 +20,7 @@ import math
 import torch
 
 from .fixed_layout import compute_fixed_feather_strips
-from .tile_config import parse_tile_config
+from .tile_config import parse_tile_config, unwrap_tile_config
 
 
 def _scalar_float(v) -> float:
@@ -72,6 +72,32 @@ def _blend_mode_keyword(v) -> str:
     if s in ("weighted_average", "weighted", "average", "mean"):
         return "weighted_average"
     return "alpha_over"
+
+
+def _device_mode_keyword(v) -> str:
+    """auto keeps the first tile device; cpu/cuda explicitly offload or use VRAM."""
+    if v is None:
+        return "auto"
+    while isinstance(v, (list, tuple)):
+        if len(v) == 0:
+            return "auto"
+        v = v[0]
+    s = str(v).strip().lower().replace(" ", "_").replace("-", "_")
+    if s in ("cpu", "system_ram", "ram"):
+        return "cpu"
+    if s in ("cuda", "gpu", "vram"):
+        return "cuda"
+    return "auto"
+
+
+def _select_merge_device(first: torch.Tensor, requested: torch.device | None, mode: str) -> torch.device:
+    if requested is not None:
+        return torch.device(requested)
+    if mode == "cpu":
+        return torch.device("cpu")
+    if mode == "cuda" and torch.cuda.is_available():
+        return first.device if first.is_cuda else torch.device("cuda:0")
+    return first.device
 
 
 def _cosine_ramp01(t: torch.Tensor) -> torch.Tensor:
@@ -152,12 +178,11 @@ def _blend_tile_with_coverage(
     a_g = alpha_geom.to(device=dev, dtype=torch.float32)
     a_g = _apply_feather_curve(a_g, feather_curve)
     a_g = a_g.unsqueeze(0).expand(B, h, w)
-    ones = torch.ones((B, h, w), dtype=torch.float32, device=dev)
-    a = torch.where(cov, a_g, ones)
+    a = torch.where(cov, a_g, torch.ones((), dtype=torch.float32, device=dev))
     a4 = a.unsqueeze(-1)
     region = output[:, y : y + h, x : x + w, :]
-    region_f = region.float()
-    tile_f = tile.float()
+    region_f = region.to(dtype=torch.float32)
+    tile_f = tile.to(device=dev, dtype=torch.float32)
     blended = region_f * (1.0 - a4) + tile_f * a4
     output[:, y : y + h, x : x + w, :] = blended.to(dtype=dt)
     covered[:, y : y + h, x : x + w] = True
@@ -178,9 +203,9 @@ def _weighted_accum_region(
     dev = num.device
     wt = weight_hw.to(device=dev, dtype=torch.float32).clamp(0.0, 1.0)
     wt4 = wt.unsqueeze(0).unsqueeze(-1).expand(B, h, w, C)
-    tf = tile.float()
+    tf = tile.to(device=dev, dtype=torch.float32)
     num[:, y : y + h, x : x + w, :] += tf * wt4
-    den[:, y : y + h, x : x + w] += wt.unsqueeze(0).expand(B, h, w)
+    den[:, y : y + h, x : x + w] += wt.unsqueeze(0)
 
 
 def _normalize_tile(t):
@@ -236,8 +261,10 @@ def merge_fixed_grid_tiles(
     device: torch.device | None = None,
     feather_curve: str = "linear",
     blend_mode: str = "alpha_over",
+    merge_device: str = "auto",
 ) -> torch.Tensor:
     """Fixed layout: alpha_over (painter + coverage) or weighted_average (geometry weights only)."""
+    config_tuple = unwrap_tile_config(config_tuple)
     v = config_tuple[0]
     if v == 5:
         (
@@ -277,12 +304,7 @@ def merge_fixed_grid_tiles(
     if len(first.shape) < 4:
         raise ValueError(f"Tile shape {first.shape} - expected (B,H,W,C)")
     B, C = first.shape[0], first.shape[3]
-    if first.is_cuda:
-        dev = first.device
-    elif torch.cuda.is_available():
-        dev = torch.device("cuda:0")
-    else:
-        dev = first.device
+    dev = _select_merge_device(first, device, merge_device)
 
     _, _, _, tile_specs = parse_tile_config(config_tuple)
     bx_u, by_u = max(0, int(bx)), max(0, int(by))
@@ -332,8 +354,10 @@ def merge_tiles(
     device: torch.device | None = None,
     feather_curve: str = "linear",
     blend_mode: str = "alpha_over",
+    merge_device: str = "auto",
 ) -> torch.Tensor:
     """Merge: grid or fixed; alpha_over vs weighted_average (symmetric geometry weights)."""
+    config_tuple = unwrap_tile_config(config_tuple)
     ver = config_tuple[0]
     if ver in (3, 5):
         return merge_fixed_grid_tiles(
@@ -343,6 +367,7 @@ def merge_tiles(
             device=device,
             feather_curve=feather_curve,
             blend_mode=blend_mode,
+            merge_device=merge_device,
         )
     width, height, _multiple, tile_specs = parse_tile_config(config_tuple)
 
@@ -354,12 +379,7 @@ def merge_tiles(
         raise ValueError(f"Tile shape {first.shape} - expected (B,H,W,C)")
     B, C = first.shape[0], first.shape[3]
 
-    if first.is_cuda:
-        device = first.device
-    elif torch.cuda.is_available():
-        device = torch.device("cuda:0")
-    else:
-        device = first.device
+    device = _select_merge_device(first, device, merge_device)
 
     if blend_mode == "weighted_average":
         num = torch.zeros((B, height, width, C), dtype=torch.float32, device=device)
@@ -455,6 +475,13 @@ class VideoTileMerge:
                         "tooltip": "alpha_over: painter order + coverage gate. weighted_average: sum(weight×color)/sum(weight) with same geometry weights.",
                     },
                 ),
+                "merge_device": (
+                    ["auto", "cpu", "cuda"],
+                    {
+                        "default": "auto",
+                        "tooltip": "auto keeps the first tile device. cpu uses system RAM for merge/output; cuda uses VRAM when available.",
+                    },
+                ),
             },
         }
 
@@ -465,22 +492,23 @@ class VideoTileMerge:
     FUNCTION = "merge"
     CATEGORY = "Video Tiler"
 
-    def merge(self, tile_config, tiles, feather, feather_curve=None, blend_mode=None, **kwargs):
-        if isinstance(tile_config, (list, tuple)) and len(tile_config) > 0:
-            tile_config = tile_config[0]
+    def merge(self, tile_config, tiles, feather, feather_curve=None, blend_mode=None, merge_device=None, **kwargs):
+        tile_config = unwrap_tile_config(tile_config)
         feather = _scalar_float(feather)
         curve = _feather_curve_mode(feather_curve)
         mode = _blend_mode_keyword(blend_mode)
+        dev_mode = _device_mode_keyword(merge_device)
         if isinstance(tiles, (list, tuple)):
             tiles_list = list(tiles)
         else:
             tiles_list = [tiles]
-        print(f"[Video Tiler] Merging {len(tiles_list)} tiles → single IMAGE batch ({mode})")
+        print(f"[Video Tiler] Merging {len(tiles_list)} tiles -> single IMAGE batch ({mode}, device={dev_mode})")
         result = merge_tiles(
             tiles_list,
             tile_config,
             feather,
             feather_curve=curve,
             blend_mode=mode,
+            merge_device=dev_mode,
         )
         return (result,)

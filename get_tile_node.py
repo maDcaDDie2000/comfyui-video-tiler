@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import torch
 
-from .tile_config import parse_tile_config
+from .tile_config import parse_tile_config, unwrap_tile_config
 
 
 def _scalar_int(v) -> int:
@@ -119,8 +119,7 @@ class GetTile:
     CATEGORY = "Video Tiler"
 
     def get_tile(self, images, tile_config: tuple, tile_index: int):
-        if isinstance(tile_config, (list, tuple)) and len(tile_config) > 0:
-            tile_config = tile_config[0]
+        tile_config = unwrap_tile_config(tile_config)
         ti = _scalar_int(tile_index)
 
         width, height, _, tile_specs = parse_tile_config(tile_config)
