@@ -1,2 +1,4 @@
 __pycache__/
 *.py[cod]
+video_tiler_tiles/
+_tmp_vtiler_probe/
