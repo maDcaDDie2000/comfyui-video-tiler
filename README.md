@@ -3,7 +3,7 @@
 Memory-conscious video/image tiling for ComfyUI with overlap tiles, gaps, and feather blending.
 The normal slicers use tensor views where possible, and the merge nodes write into a single output buffer.
 
-This pack was built primarily for LTX 2.3 tiled video upscale workflows. Other models or node stacks may work, but they are not the main target.
+This pack was built and tested primarily for **LTX 2.3** and **MiniMax H3** tiled video upscale workflows. Other models or node stacks may work, but they are not the main target.
 
 > **Hardware disclaimer:** Tiled video upscaling is still a demanding workflow
 > intended for systems with high hardware specifications. Tiling reduces
@@ -69,6 +69,17 @@ under **Video Tiler**. Disk-backed nodes appear under **Video Tiler/Disk**.
 | `VideoTileDiskGetTile` | Video Tile Disk Get Tile |
 | `VideoTileDiskSaveTile` | Video Tile Disk Save Tile |
 | `VideoTileDiskMerge` | Video Tile Disk Merge |
+
+## Example Workflows
+
+Both supported targets include a normal in-memory example and a disk-buffered example:
+
+| Target | Normal workflow | Disk-buffered workflow |
+|---|---|---|
+| LTX 2.3 | [Video Tiler LTX 2.3 upscaling workflow](example_workflow/Video%20Tiler%20LTX%202.3%20upscaling%20workflow.json) | [Video Tiler LTX 2.3 disk buffered workflow](example_workflow/Video%20Tiler%20LTX%202.3%20disk%20buffered%20workflow.json) |
+| MiniMax H3 | [Video Tiler MiniMax H3 upscaler workflow](example_workflow/Video%20Tiler%20Minimax%20H3%20upscaler%20workflow.json) | [Video Tiler MiniMax H3 disk buffered workflow](example_workflow/Video%20Tiler%20Minimax%20H3%20disk%20buffered%20workflow.json) |
+
+The normal examples keep the processed tiles in memory. The disk-buffered variants save one indexed tile per queued run, then merge the saved tiles and export the video in a second pass. Each disk-buffered workflow contains notes describing when to increment the tile index and when to enable the merge pass.
 
 ## Sampler Timing
 
@@ -287,6 +298,6 @@ Returns true when an `AUDIO` bundle appears to contain real audio. If a path is 
 
 ## Compatibility
 
-- Primary target: LTX 2.3 workflows.
+- Primary tested targets: LTX 2.3 and MiniMax H3 workflows.
 - IMAGE tensors use ComfyUI layout `[B,H,W,C]`.
 - Compatible with VideoHelperSuite-style IMAGE/AUDIO use.
