@@ -104,6 +104,10 @@ def _default_root() -> Path:
         return Path.cwd() / "video_tiler_tiles"
 
 
+def _default_root_string() -> str:
+    return str(_default_root())
+
+
 def _job_dir(output_folder: str, job_name: str) -> Path:
     root = Path(output_folder).expanduser() if output_folder else _default_root()
     return root / _safe_job_name(job_name)
@@ -154,6 +158,30 @@ def _sorted_tile_specs(config_tuple: tuple[Any, ...]):
     return sorted(enumerate(tile_specs), key=lambda item: item[1].order)
 
 
+def _available_tile_indices(manifest_path: Path, data: dict[str, Any], tile_count: int) -> set[int]:
+    job_dir = Path(data.get("job_dir") or manifest_path.parent)
+    available: set[int] = set()
+    for raw_idx, meta in (data.get("saved_tiles") or {}).items():
+        try:
+            idx = int(raw_idx)
+        except (TypeError, ValueError):
+            continue
+        rel = meta.get("path") if isinstance(meta, dict) else None
+        path = job_dir / rel if rel else _tile_path(job_dir, idx)
+        if 0 <= idx < tile_count and path.is_file():
+            available.add(idx)
+    for idx in range(tile_count):
+        if _tile_path(job_dir, idx).is_file():
+            available.add(idx)
+    return available
+
+
+def _format_missing_tiles(missing: list[int]) -> str:
+    preview = ", ".join(str(i) for i in missing[:12])
+    more = "..." if len(missing) > 12 else ""
+    return f"{preview}{more}"
+
+
 class VideoTileDiskJob:
     """Create a manifest for a disk-backed tile job from an existing TILE_CONFIG."""
 
@@ -176,7 +204,7 @@ class VideoTileDiskJob:
                 ),
                 "output_folder": (
                     "STRING",
-                    {"default": "", "tooltip": "Empty = ComfyUI output/video_tiler_tiles. Otherwise use this folder."},
+                    {"default": _default_root_string(), "tooltip": "Folder where disk tile job folders are written."},
                 ),
             },
         }
@@ -353,6 +381,10 @@ class VideoTileDiskMerge:
                 "feather_curve": (["linear", "ease_in", "ease_out", "ease_in_out"], {"default": "linear"}),
                 "blend_mode": (["alpha_over", "weighted_average"], {"default": "alpha_over"}),
                 "merge_device": (["auto", "cpu", "cuda"], {"default": "cpu"}),
+                "require_all_tiles": (
+                    "BOOLEAN",
+                    {"default": True, "tooltip": "Stop before merging until every expected tile file is available."},
+                ),
             },
         }
 
@@ -361,16 +393,23 @@ class VideoTileDiskMerge:
     FUNCTION = "merge"
     CATEGORY = "Video Tiler/Disk"
 
-    def merge(self, tile_job, feather, feather_curve=None, blend_mode=None, merge_device=None):
+    def merge(self, tile_job, feather, feather_curve=None, blend_mode=None, merge_device=None, require_all_tiles=True):
         manifest_path, data = _load_manifest(tile_job)
         config_tuple = _manifest_tile_config(data)
         width, height, _multiple, tile_specs = parse_tile_config(config_tuple)
-        saved_tiles = data.get("saved_tiles", {})
-        missing = [i for i in range(len(tile_specs)) if str(i) not in saved_tiles and not _tile_path(manifest_path.parent, i).is_file()]
+        tile_count = len(tile_specs)
+        available = _available_tile_indices(manifest_path, data, tile_count)
+        missing = [i for i in range(tile_count) if i not in available]
+        if missing and _scalar_bool(require_all_tiles, True):
+            raise RuntimeError(
+                f"Disk merge waiting for tiles: saved {len(available)}/{tile_count}; "
+                f"missing {_format_missing_tiles(missing)}"
+            )
         if missing:
-            preview = ", ".join(str(i) for i in missing[:12])
-            more = "..." if len(missing) > 12 else ""
-            raise FileNotFoundError(f"Missing saved tiles: {preview}{more}")
+            print(
+                f"[Video Tiler] Disk merge warning: saved {len(available)}/{tile_count}; "
+                f"missing {_format_missing_tiles(missing)}"
+            )
 
         mode = _blend_mode_keyword(blend_mode)
         curve = _feather_curve_mode(feather_curve)

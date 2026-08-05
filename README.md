@@ -11,7 +11,7 @@ This pack was built primarily for LTX 2.3 tiled video upscale workflows. Other m
   - `auto` keeps the first tile's device.
   - `cpu` merges in system RAM and returns a CPU IMAGE.
   - `cuda` uses VRAM when CUDA is available.
-- Added disk-backed tile nodes for two-pass workflows where processed tiles are saved one by one and merged later.
+- Added disk-backed tile nodes for workflows where processed tiles are saved one by one and merged later; Disk Merge can wait until all expected tile files exist.
 - Fixed direct `TILE_CONFIG` handling for helper/merge nodes.
 - Fixed small-frame Reference Color Match crashes by falling back to replicate padding when reflect padding is too large.
 - Removed tracked Python bytecode and added `.gitignore` entries for cache/output folders.
@@ -25,6 +25,7 @@ This pack was built primarily for LTX 2.3 tiled video upscale workflows. Other m
 - **Reference tile alignment**: cuts matching reference tiles from the same `tile_config`.
 - **Reference color match**: post-merge low-frequency color pull toward a reference clip.
 - **Audio present check**: detects real audio streams/waveform energy from `AUDIO` bundles.
+- **Sampler timing**: measures sampler wall-clock time and exposes averages as workflow FLOATs.
 
 Tiling reduces per-step VRAM, but total workflow memory still depends heavily on clip length, resolution, channels, dtype, and how ComfyUI caches nodes. Disk-backed tile saving is the lowest-VRAM path for the expensive upscale branch because processed tiles do not all need to remain in graph memory.
 
@@ -35,7 +36,8 @@ cd ComfyUI/custom_nodes
 git clone https://github.com/maDcaDDie2000/comfyui-video-tiler
 ```
 
-Restart ComfyUI. Nodes appear under **Video Tiler** or **Video Tiler/Disk**.
+Restart ComfyUI. Nodes appear under **Video Tiler**, **Video Tiler/Disk**, or
+**Video Tiler/Timing**.
 
 ## Node List
 
@@ -49,11 +51,39 @@ Restart ComfyUI. Nodes appear under **Video Tiler** or **Video Tiler/Disk**.
 | `ReferenceTileSlice` | Reference Tile Slice |
 | `VideoTileReferenceColorMatch` | Video Tile Reference Color Match |
 | `VideoTileAudioFFprobeLTX` | Video Tile Audio Present |
+| `VideoTileSamplerTimerStart` | Sampler Timer Start |
+| `VideoTileSamplerTimerResult` | Sampler Timing Result |
 | `VideoTileDiskJob` | Video Tile Disk Job |
 | `VideoTileDiskIndexes` | Video Tile Disk Indexes |
 | `VideoTileDiskGetTile` | Video Tile Disk Get Tile |
 | `VideoTileDiskSaveTile` | Video Tile Disk Save Tile |
 | `VideoTileDiskMerge` | Video Tile Disk Merge |
+
+## Sampler Timing
+
+Use the two timing nodes around a standard **KSampler**, **KSampler Advanced**, or
+custom sampler pipeline:
+
+1. Connect the checkpoint/model loader's `MODEL` to **Sampler Timer Start**.
+2. Connect its `model` output to the sampler's `model` input. For a custom
+   sampling pipeline, connect it where the MODEL enters the guider/pipeline.
+3. Connect the sampler's `LATENT` output to **Sampler Timing Result** `samples`.
+4. Connect `sampler_timer` between the two timing nodes.
+
+**Sampler Timing Result** passes the LATENT through unchanged and provides:
+
+| Output | Meaning |
+|---|---|
+| `average_seconds` | Average wall-clock seconds per completed sampler call. This is the main output for tiled/list sampling. |
+| `total_seconds` | Total sampler time in the current queued workflow execution. |
+| `seconds_per_step` | Total time divided by the number of sampled sigma intervals. |
+| `sampler_calls` | Number of sampler calls included in the average. |
+| `total_steps` | Number of sigma intervals included in `seconds_per_step`. |
+
+The FLOAT outputs can connect to any node that accepts a FLOAT. GPU work is
+synchronized at the measurement boundaries for useful wall-clock results. Model
+loading, VAE decode, and other nodes are not included. Timing data is reset for
+every queued workflow execution.
 
 ## Standard In-Memory Workflow
 
@@ -75,7 +105,7 @@ Use this when the expensive upscale branch cannot keep all processed tiles cache
 1. Run either slicer to get `tile_config`.
 2. Connect `tile_config` to **Video Tile Disk Job**.
    - `job_name`: stable folder name for this run.
-   - `output_folder`: empty uses ComfyUI `output/video_tiler_tiles`; otherwise choose a folder.
+   - `output_folder`: defaults visibly to the folder used for disk tile jobs; change it if needed.
    - Output `tile_job` is the manifest path used by the other disk nodes.
 3. Choose a tile index.
    - Manual/reliable path: set `tile_index` yourself and queue one run per tile.
@@ -100,7 +130,8 @@ The numbering matches the original tile order in `tile_config`. The manifest rec
 
 1. Connect the same `tile_job` to **Video Tile Disk Merge**.
 2. Set `feather`, `feather_curve`, `blend_mode`, and `merge_device`.
-3. The node loads one saved tile at a time and blends it into the final output buffer.
+3. The node checks which tile files are available. With `require_all_tiles=True`, it stops before merging until every expected tile file exists.
+4. Once all tiles are saved, it loads one saved tile at a time and blends it into the final output buffer.
 
 This avoids loading every processed tile at once. The final merged IMAGE still exists as one tensor, so very long videos can still require a lot of system RAM if `merge_device=cpu` or VRAM if `merge_device=cuda`.
 
@@ -114,7 +145,7 @@ Creates or updates a disk job manifest from a slicer `tile_config`.
 |---|---|
 | `tile_config` | From either slicer. |
 | `job_name` | Folder-safe name for the tile job. |
-| `output_folder` | Empty uses ComfyUI output folder; otherwise use the supplied folder. |
+| `output_folder` | Folder where disk tile job folders are written. The widget shows the default path. |
 
 Outputs: `tile_job`, `manifest_path`, `tile_count`, `status`.
 
@@ -162,6 +193,7 @@ Loads saved tiles one by one from disk and merges them.
 | `feather_curve` | Optional: `linear`, `ease_in`, `ease_out`, `ease_in_out`. |
 | `blend_mode` | Optional: `alpha_over` or `weighted_average`. |
 | `merge_device` | Optional: `cpu` default, `auto`, or `cuda`. |
+| `require_all_tiles` | Optional: default `True`; stop before merging until every expected tile file exists. |
 
 ## Slicer Nodes
 

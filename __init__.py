@@ -6,6 +6,10 @@ from .get_tile_node import GetTile
 from .ref_tile_node import ReferenceTileSlice
 from .reference_color_match_node import VideoTileReferenceColorMatch
 from .audio_ffprobe_node import VideoTileAudioFFprobeLTX
+from .sampler_timer_node import (
+    VideoTileSamplerTimerResult,
+    VideoTileSamplerTimerStart,
+)
 from .disk_nodes import (
     VideoTileDiskGetTile,
     VideoTileDiskIndexes,
@@ -25,6 +29,8 @@ NODE_CLASS_MAPPINGS = {
     "ReferenceTileSlice": ReferenceTileSlice,
     "VideoTileReferenceColorMatch": VideoTileReferenceColorMatch,
     "VideoTileAudioFFprobeLTX": VideoTileAudioFFprobeLTX,
+    "VideoTileSamplerTimerStart": VideoTileSamplerTimerStart,
+    "VideoTileSamplerTimerResult": VideoTileSamplerTimerResult,
     "VideoTileDiskJob": VideoTileDiskJob,
     "VideoTileDiskIndexes": VideoTileDiskIndexes,
     "VideoTileDiskGetTile": VideoTileDiskGetTile,
@@ -40,6 +46,8 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "ReferenceTileSlice": "Reference Tile Slice",
     "VideoTileReferenceColorMatch": "Video Tile Reference Color Match",
     "VideoTileAudioFFprobeLTX": "Video Tile Audio Present",
+    "VideoTileSamplerTimerStart": "Sampler Timer Start",
+    "VideoTileSamplerTimerResult": "Sampler Timing Result",
     "VideoTileDiskJob": "Video Tile Disk Job",
     "VideoTileDiskIndexes": "Video Tile Disk Indexes",
     "VideoTileDiskGetTile": "Video Tile Disk Get Tile",
