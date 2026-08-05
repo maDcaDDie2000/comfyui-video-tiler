@@ -146,27 +146,6 @@ The numbering matches the original tile order in `tile_config`. The manifest rec
 
 This avoids loading every processed tile at once. The final merged IMAGE still exists as one tensor, so very long videos can still require a lot of system RAM if `merge_device=cpu` or VRAM if `merge_device=cuda`.
 
-### Very Long Videos: Merge in Temporal Parts
-
-You do not have to merge the complete video as one IMAGE batch. For clips that
-are too large even for **Video Tile Disk Merge**, split the source frames into
-consecutive temporal parts before tiling—for example, frames `0-119`,
-`120-239`, and so on.
-
-Run each temporal part as its own disk-backed job with a unique `job_name`, then
-merge and export each job as a separate video segment. Concatenate the encoded
-segments afterward, for example with FFmpeg's concat demuxer. Only one temporal
-part then needs to exist as a merged IMAGE tensor at a time, which lowers peak
-RAM or VRAM during the merge.
-
-Concatenating all merged IMAGE batches inside ComfyUI creates the full video
-tensor again and removes most of this memory benefit. Keep audio separate and
-mux it back after the video segments have been concatenated.
-
-Do not save several temporal parts into the same disk job: they use the same
-`tile_XXXXX.pt` names and would overwrite one another. Keep the spatial tiling
-and merge settings identical for every part.
-
 ## Disk Node Details
 
 ### Video Tile Disk Job
