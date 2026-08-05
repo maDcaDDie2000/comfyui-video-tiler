@@ -301,3 +301,7 @@ Returns true when an `AUDIO` bundle appears to contain real audio. If a path is 
 - Primary tested targets: LTX 2.3 and MiniMax H3 workflows.
 - IMAGE tensors use ComfyUI layout `[B,H,W,C]`.
 - Compatible with VideoHelperSuite-style IMAGE/AUDIO use.
+
+## License
+
+Licensed under the [Apache License 2.0](LICENSE).

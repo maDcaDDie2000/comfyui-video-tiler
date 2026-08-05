@@ -1,0 +1,18 @@
+[project]
+name = "video-tiler"
+version = "1.0.0"
+description = "Memory-conscious video and image tiling nodes for ComfyUI, including disk-buffered processing and sampler timing."
+license = { file = "LICENSE" }
+dependencies = []
+classifiers = [
+    "Operating System :: OS Independent",
+]
+
+[project.urls]
+Repository = "https://github.com/maDcaDDie2000/comfyui-video-tiler"
+Documentation = "https://github.com/maDcaDDie2000/comfyui-video-tiler#readme"
+"Bug Tracker" = "https://github.com/maDcaDDie2000/comfyui-video-tiler/issues"
+
+[tool.comfy]
+PublisherId = "madcaddie2000"
+DisplayName = "ComfyUI Video Tiler"
