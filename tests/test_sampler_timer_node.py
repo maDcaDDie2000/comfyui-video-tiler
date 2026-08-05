@@ -29,6 +29,10 @@ class _FakeModel:
 
 
 class SamplerTimerTests(unittest.TestCase):
+    def test_timing_nodes_use_the_main_video_tiler_category(self):
+        self.assertEqual(VideoTileSamplerTimerStart.CATEGORY, "Video Tiler")
+        self.assertEqual(VideoTileSamplerTimerResult.CATEGORY, "Video Tiler")
+
     def test_wrapper_averages_calls_and_sigma_intervals(self):
         timer = SamplerTimerState()
         executor = _Executor()

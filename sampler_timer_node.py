@@ -123,7 +123,7 @@ class VideoTileSamplerTimerStart:
         "Timing handle to connect to Sampler Timing Result.",
     )
     FUNCTION = "start"
-    CATEGORY = "Video Tiler/Timing"
+    CATEGORY = "Video Tiler"
     DESCRIPTION = "Instruments a cloned model to measure its sampler calls."
 
     @classmethod
@@ -193,7 +193,7 @@ class VideoTileSamplerTimerResult:
         "Total sigma intervals included in seconds_per_step.",
     )
     FUNCTION = "read"
-    CATEGORY = "Video Tiler/Timing"
+    CATEGORY = "Video Tiler"
     DESCRIPTION = (
         "Reads sampler timing after sampling. FLOAT outputs can feed any "
         "compatible workflow node."
