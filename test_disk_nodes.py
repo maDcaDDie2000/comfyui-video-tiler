@@ -37,7 +37,7 @@ def _config():
     )
 
 
-def _write_job(root: Path, saved_indices=(0, 1)) -> Path:
+def _write_job(root: Path, saved_indices=(0, 1), audio=None) -> Path:
     job_dir = root / "review_job"
     job_dir.mkdir(parents=True)
     manifest = {
@@ -55,6 +55,8 @@ def _write_job(root: Path, saved_indices=(0, 1)) -> Path:
         path = job_dir / f"tile_{index:05d}.pt"
         torch.save({"tile": tile, "tile_index": index}, path)
         manifest["saved_tiles"][str(index)] = {"path": path.name}
+    if audio is not None:
+        manifest["audio"] = disk_nodes._save_job_audio(job_dir, audio)
     manifest_path = job_dir / "manifest.json"
     manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
     return manifest_path
@@ -75,7 +77,7 @@ class DiskFolderFlowTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp:
             manifest_path = _write_job(Path(temp))
 
-            image, status, tile_count = disk_nodes.VideoTileDiskFolderMerge().merge_folder(
+            image, status, tile_count, audio = disk_nodes.VideoTileDiskFolderMerge().merge_folder(
                 str(manifest_path.parent),
                 0.0,
                 merge_device="cpu",
@@ -86,6 +88,65 @@ class DiskFolderFlowTests(unittest.TestCase):
             self.assertTrue(torch.allclose(image[:, :, 2:, :], torch.full((3, 2, 2, 3), 0.75)))
             self.assertEqual(tile_count, 2)
             self.assertIn("2/2", status)
+            self.assertIsNone(audio)
+
+    def test_disk_job_stores_audio_for_independent_merge(self):
+        with tempfile.TemporaryDirectory() as temp:
+            source_audio = {
+                "waveform": torch.linspace(-1.0, 1.0, 24).reshape(1, 1, 24),
+                "sample_rate": 48000,
+            }
+            result = disk_nodes.VideoTileDiskJob().plan(
+                _config(),
+                "audio_job",
+                temp,
+                audio=source_audio,
+            )
+            manifest_path = Path(result[0])
+
+            self.assertTrue((manifest_path.parent / "audio.pt").is_file())
+            opened = disk_nodes.VideoTileDiskOpenJob().open_job(str(manifest_path))
+            stored_audio = opened[-1]
+            self.assertEqual(stored_audio["sample_rate"], 48000)
+            self.assertTrue(torch.equal(stored_audio["waveform"], source_audio["waveform"]))
+
+            # Replanning an existing job without the optional input must not discard its audio.
+            disk_nodes.VideoTileDiskJob().plan(_config(), "audio_job", temp)
+            reopened = disk_nodes.VideoTileDiskOpenJob().open_job(str(manifest_path))
+            self.assertTrue(torch.equal(reopened[-1]["waveform"], source_audio["waveform"]))
+
+    def test_standalone_folder_merge_outputs_stored_audio(self):
+        with tempfile.TemporaryDirectory() as temp:
+            source_audio = {
+                "waveform": torch.ones((1, 2, 32), dtype=torch.float32),
+                "sample_rate": 44100,
+            }
+            manifest_path = _write_job(Path(temp), audio=source_audio)
+
+            _image, status, _tile_count, audio = disk_nodes.VideoTileDiskFolderMerge().merge_folder(
+                str(manifest_path),
+                0.0,
+            )
+
+            self.assertEqual(audio["sample_rate"], 44100)
+            self.assertTrue(torch.equal(audio["waveform"], source_audio["waveform"]))
+            self.assertIn("audio ready", status)
+
+    def test_audio_override_supports_jobs_created_before_audio_storage(self):
+        with tempfile.TemporaryDirectory() as temp:
+            manifest_path = _write_job(Path(temp))
+            override = {
+                "waveform": torch.zeros((1, 1, 16), dtype=torch.float32),
+                "sample_rate": 32000,
+            }
+
+            result = disk_nodes.VideoTileDiskFolderMerge().merge_folder(
+                str(manifest_path),
+                0.0,
+                audio_override=override,
+            )
+
+            self.assertIs(result[-1], override)
 
     def test_standalone_folder_merge_waits_for_every_expected_tile(self):
         with tempfile.TemporaryDirectory() as temp:

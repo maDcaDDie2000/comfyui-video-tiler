@@ -38,6 +38,7 @@ from .tile_config import parse_tile_config, unwrap_tile_config
 
 _MANIFEST_VERSION = 1
 _TILE_DIGITS = 5
+_AUDIO_FILENAME = "audio.pt"
 
 
 def _scalar_int(v, default: int = 0) -> int:
@@ -178,6 +179,64 @@ def _load_saved_tile(path: Path) -> torch.Tensor:
     return tile
 
 
+def _unwrap_audio(audio):
+    while isinstance(audio, (list, tuple)) and len(audio) == 1:
+        audio = audio[0]
+    return audio
+
+
+def _cpu_serializable(value):
+    if isinstance(value, torch.Tensor):
+        return value.detach().cpu().contiguous()
+    if isinstance(value, dict):
+        return {key: _cpu_serializable(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_cpu_serializable(item) for item in value]
+    if isinstance(value, tuple):
+        return tuple(_cpu_serializable(item) for item in value)
+    return value
+
+
+def _save_job_audio(job_dir: Path, audio) -> dict[str, Any] | None:
+    audio = _unwrap_audio(audio)
+    if audio is None:
+        return None
+    path = job_dir / _AUDIO_FILENAME
+    temp_path = path.with_suffix(path.suffix + ".tmp")
+    payload = {
+        "audio": _cpu_serializable(audio),
+        "saved_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+    }
+    torch.save(payload, temp_path)
+    temp_path.replace(path)
+    metadata: dict[str, Any] = {"path": path.name, "saved_at": payload["saved_at"]}
+    if isinstance(audio, dict) and audio.get("sample_rate") is not None:
+        metadata["sample_rate"] = _scalar_int(audio["sample_rate"])
+    return metadata
+
+
+def _load_job_audio(manifest_path: Path, data: dict[str, Any]):
+    metadata = data.get("audio")
+    relative_path = metadata.get("path") if isinstance(metadata, dict) else None
+    path = manifest_path.parent / (relative_path or _AUDIO_FILENAME)
+    if not path.is_file():
+        return None
+    try:
+        payload = torch.load(path, map_location="cpu", weights_only=False)
+    except TypeError:
+        payload = torch.load(path, map_location="cpu")
+    if isinstance(payload, dict) and "audio" in payload:
+        return payload["audio"]
+    return payload
+
+
+def _resolve_job_audio(manifest_path: Path, data: dict[str, Any], audio_override=None):
+    override = _unwrap_audio(audio_override)
+    if override is not None:
+        return override
+    return _load_job_audio(manifest_path, data)
+
+
 def _sorted_tile_specs(config_tuple: tuple[Any, ...]):
     _, _, _, tile_specs = parse_tile_config(config_tuple)
     return sorted(enumerate(tile_specs), key=lambda item: item[1].order)
@@ -229,7 +288,8 @@ class VideoTileDiskJob:
 
     DESCRIPTION = (
         "Creates a disk-backed tile job manifest from a slicer tile_config. "
-        "Use this with Disk Tile by Index, Save Disk Tile, and Merge Disk Tiles."
+        "Optionally stores source audio for independent final export. Use this with Disk Tile by Index, "
+        "Save Disk Tile, and Merge Disk Tiles."
     )
 
     @classmethod
@@ -249,6 +309,17 @@ class VideoTileDiskJob:
                     {"default": _default_root_string(), "tooltip": "Folder where disk tile job folders are written."},
                 ),
             },
+            "optional": {
+                "audio": (
+                    "AUDIO",
+                    {
+                        "tooltip": (
+                            "Optional source audio to store once as audio.pt with the disk job. "
+                            "Folder Merge will reload and output it."
+                        ),
+                    },
+                ),
+            },
         }
 
     RETURN_TYPES = ("TILE_JOB", "STRING", "INT", "STRING")
@@ -256,19 +327,23 @@ class VideoTileDiskJob:
     FUNCTION = "plan"
     CATEGORY = "Video Tiler/Disk"
 
-    def plan(self, tile_config, job_name: str, output_folder: str = ""):
+    def plan(self, tile_config, job_name: str, output_folder: str = "", audio=None):
         config_tuple = unwrap_tile_config(tile_config)
         width, height, multiple, tile_specs = parse_tile_config(config_tuple)
         job_dir = _job_dir(_scalar_str(output_folder), _scalar_str(job_name, "video_tile_job"))
         job_dir.mkdir(parents=True, exist_ok=True)
         manifest_path = job_dir / "manifest.json"
         tile_count = len(tile_specs)
-        existing_saved: dict[str, Any] = {}
+        existing_data: dict[str, Any] = {}
         if manifest_path.exists():
             try:
-                existing_saved = json.loads(manifest_path.read_text(encoding="utf-8")).get("saved_tiles", {})
+                existing_data = json.loads(manifest_path.read_text(encoding="utf-8"))
             except Exception:
-                existing_saved = {}
+                existing_data = {}
+        existing_saved = existing_data.get("saved_tiles", {})
+        audio_metadata = _save_job_audio(job_dir, audio)
+        if audio_metadata is None and (job_dir / _AUDIO_FILENAME).is_file():
+            audio_metadata = existing_data.get("audio") or {"path": _AUDIO_FILENAME}
         data = {
             "manifest_version": _MANIFEST_VERSION,
             "created_at": time.strftime("%Y-%m-%d %H:%M:%S"),
@@ -282,8 +357,11 @@ class VideoTileDiskJob:
             "tile_count": int(tile_count),
             "saved_tiles": existing_saved,
         }
+        if audio_metadata is not None:
+            data["audio"] = audio_metadata
         _save_manifest(manifest_path, data)
-        status = f"Tile job ready: {tile_count} tiles -> {manifest_path}"
+        audio_status = "audio stored" if audio_metadata is not None else "no stored audio"
+        status = f"Tile job ready: {tile_count} tiles, {audio_status} -> {manifest_path}"
         print(f"[Video Tiler] {status}")
         return (str(manifest_path), str(manifest_path), tile_count, status)
 
@@ -310,8 +388,8 @@ class VideoTileDiskOpenJob:
             },
         }
 
-    RETURN_TYPES = ("TILE_JOB", "STRING", "INT", "INT", "STRING")
-    RETURN_NAMES = ("tile_job", "manifest_path", "saved_count", "tile_count", "status")
+    RETURN_TYPES = ("TILE_JOB", "STRING", "INT", "INT", "STRING", "AUDIO")
+    RETURN_NAMES = ("tile_job", "manifest_path", "saved_count", "tile_count", "status", "audio")
     FUNCTION = "open_job"
     CATEGORY = "Video Tiler/Disk"
 
@@ -322,6 +400,7 @@ class VideoTileDiskOpenJob:
     def open_job(self, job_folder: str):
         manifest_path, data, available, missing = _job_progress(job_folder)
         tile_count = int(data["tile_count"])
+        audio = _load_job_audio(manifest_path, data)
         if missing:
             status = (
                 f"Tile job incomplete: {len(available)}/{tile_count} saved; "
@@ -329,8 +408,9 @@ class VideoTileDiskOpenJob:
             )
         else:
             status = f"Tile job complete: {tile_count}/{tile_count} saved"
+        status += "; stored audio available" if audio is not None else "; no stored audio"
         print(f"[Video Tiler] {status}: {manifest_path}")
-        return (str(manifest_path), str(manifest_path), len(available), tile_count, status)
+        return (str(manifest_path), str(manifest_path), len(available), tile_count, status, audio)
 
 
 class VideoTileDiskIndexes:
@@ -474,16 +554,34 @@ class VideoTileDiskMerge:
                     "BOOLEAN",
                     {"default": True, "tooltip": "Stop before merging until every expected tile file is available."},
                 ),
+                "audio_override": (
+                    "AUDIO",
+                    {
+                        "tooltip": (
+                            "Optional audio for an older job without stored audio. Overrides audio.pt when connected."
+                        ),
+                    },
+                ),
             },
         }
 
-    RETURN_TYPES = ("IMAGE",)
-    RETURN_NAMES = ("IMAGE",)
+    RETURN_TYPES = ("IMAGE", "AUDIO")
+    RETURN_NAMES = ("IMAGE", "audio")
     FUNCTION = "merge"
     CATEGORY = "Video Tiler/Disk"
 
-    def merge(self, tile_job, feather, feather_curve=None, blend_mode=None, merge_device=None, require_all_tiles=True):
+    def merge(
+        self,
+        tile_job,
+        feather,
+        feather_curve=None,
+        blend_mode=None,
+        merge_device=None,
+        require_all_tiles=True,
+        audio_override=None,
+    ):
         manifest_path, data = _load_manifest(tile_job)
+        audio = _resolve_job_audio(manifest_path, data, audio_override)
         config_tuple = _manifest_tile_config(data)
         width, height, _multiple, tile_specs = parse_tile_config(config_tuple)
         tile_count = len(tile_specs)
@@ -547,7 +645,7 @@ class VideoTileDiskMerge:
                 del tile
             out = num / den.unsqueeze(-1).clamp(min=1e-8)
             print(f"[Video Tiler] Disk merge complete: {len(available)} tiles -> IMAGE ({mode}, device={device})")
-            return (out.to(dtype=dtype),)
+            return (out.to(dtype=dtype), audio)
 
         output = torch.zeros((B, height, width, C), dtype=dtype, device=device)
         covered = torch.zeros((B, height, width), dtype=torch.bool, device=device)
@@ -571,7 +669,7 @@ class VideoTileDiskMerge:
                 _blend_tile_with_coverage(output, covered, tile, y, x, h, w, alpha, feather_curve=curve)
             del tile
         print(f"[Video Tiler] Disk merge complete: {len(available)} tiles -> IMAGE ({mode}, device={device})")
-        return (output,)
+        return (output, audio)
 
 
 class VideoTileDiskFolderMerge:
@@ -579,7 +677,8 @@ class VideoTileDiskFolderMerge:
 
     DESCRIPTION = (
         "Independently scans an existing disk tile job folder and merges it only when every expected "
-        "tile is available. Connect IMAGE to your video encoder; no active slicer or tile run is required."
+        "tile is available. Outputs stored or override audio with the IMAGE frame batch; no active slicer "
+        "or tile run is required."
     )
 
     @classmethod
@@ -602,11 +701,20 @@ class VideoTileDiskFolderMerge:
                 "feather_curve": (["linear", "ease_in", "ease_out", "ease_in_out"], {"default": "linear"}),
                 "blend_mode": (["alpha_over", "weighted_average"], {"default": "alpha_over"}),
                 "merge_device": (["auto", "cpu", "cuda"], {"default": "cpu"}),
+                "audio_override": (
+                    "AUDIO",
+                    {
+                        "tooltip": (
+                            "Optional audio for an existing job without audio.pt. "
+                            "When connected, this takes priority over stored audio."
+                        ),
+                    },
+                ),
             },
         }
 
-    RETURN_TYPES = ("IMAGE", "STRING", "INT")
-    RETURN_NAMES = ("IMAGE", "status", "tile_count")
+    RETURN_TYPES = ("IMAGE", "STRING", "INT", "AUDIO")
+    RETURN_NAMES = ("IMAGE", "status", "tile_count", "audio")
     FUNCTION = "merge_folder"
     CATEGORY = "Video Tiler/Disk"
 
@@ -615,7 +723,15 @@ class VideoTileDiskFolderMerge:
         # Folder contents can change while the workflow graph and widgets stay unchanged.
         return float("nan")
 
-    def merge_folder(self, job_folder, feather, feather_curve=None, blend_mode=None, merge_device=None):
+    def merge_folder(
+        self,
+        job_folder,
+        feather,
+        feather_curve=None,
+        blend_mode=None,
+        merge_device=None,
+        audio_override=None,
+    ):
         manifest_path, data, available, missing = _job_progress(job_folder)
         tile_count = int(data["tile_count"])
         if missing:
@@ -623,16 +739,21 @@ class VideoTileDiskFolderMerge:
                 f"Standalone disk merge waiting for tiles: saved {len(available)}/{tile_count}; "
                 f"missing {_format_missing_tiles(missing)}; folder {manifest_path.parent}"
             )
-        image = VideoTileDiskMerge().merge(
+        image, audio = VideoTileDiskMerge().merge(
             str(manifest_path),
             feather,
             feather_curve=feather_curve,
             blend_mode=blend_mode,
             merge_device=merge_device,
             require_all_tiles=True,
-        )[0]
-        status = f"Standalone disk merge complete: {tile_count}/{tile_count} tiles from {manifest_path.parent}"
-        return (image, status, tile_count)
+            audio_override=audio_override,
+        )
+        audio_status = "audio ready" if audio is not None else "no audio stored or connected"
+        status = (
+            f"Standalone disk merge complete: {tile_count}/{tile_count} tiles, "
+            f"{audio_status} from {manifest_path.parent}"
+        )
+        return (image, status, tile_count, audio)
 
 
 class VideoTileDiskPreview:

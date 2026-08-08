@@ -131,6 +131,7 @@ Use this when the expensive upscale branch cannot keep all processed tiles cache
 2. Connect `tile_config` to **Video Tile Disk Job**.
    - `job_name`: stable folder name for this run.
    - `output_folder`: defaults visibly to the folder used for disk tile jobs; change it if needed.
+   - `audio` (optional): connect the source `AUDIO` once to store it with the job for independent export.
    - Output `tile_job` is the manifest path used by the other disk nodes.
 3. Choose a tile index.
    - Manual/reliable path: set `tile_index` yourself and queue one run per tile.
@@ -143,6 +144,7 @@ Saved files are exact PyTorch tensor files:
 
 ```text
 manifest.json
+audio.pt          # present when source AUDIO was connected to Disk Job
 tile_00000.pt
 tile_00001.pt
 tile_00002.pt
@@ -158,8 +160,10 @@ Pass 2 can live in a completely separate ComfyUI workflow and does not need an a
 1. Add **Video Tile Disk Folder Merge**.
 2. Paste the completed job folder or its `manifest.json` path into `job_folder`.
 3. Set `feather`, `feather_curve`, `blend_mode`, and `merge_device` to the values you want for the final assembly.
-4. Connect its `IMAGE` output to your video encoder (for example, VideoHelperSuite Video Combine) and configure frame rate/audio there.
+4. Connect its `IMAGE` and `audio` outputs to your video encoder (for example, VideoHelperSuite Video Combine), then configure frame rate and format there.
 5. Queue this output branch independently. The node rescans the folder on every run. It stops with the saved count and exact missing tile indices until every expected file is present, then streams the tiles into the final frame batch.
+
+For jobs created before audio storage was added, connect the original audio loader to Folder Merge's optional `audio_override` input. The resulting `audio` output can still be wired to the encoder without regenerating any tiles. An override takes priority over stored `audio.pt`.
 
 If an existing graph still uses a `TILE_JOB` connection, **Video Tile Disk Open Job** can open the folder and provide that connection without rerunning the slicer. The original **Video Tile Disk Merge** remains available for connected graphs.
 
@@ -187,6 +191,7 @@ Creates or updates a disk job manifest from a slicer `tile_config`.
 | `tile_config` | From either slicer. |
 | `job_name` | Folder-safe name for the tile job. |
 | `output_folder` | Folder where disk tile job folders are written. The widget shows the default path. |
+| `audio` | Optional source AUDIO saved as `audio.pt` for the independent merge/export workflow. |
 
 Outputs: `tile_job`, `manifest_path`, `tile_count`, `status`.
 
@@ -198,7 +203,7 @@ Opens a saved job independently from the slicer/processing workflow.
 |---|---|
 | `job_folder` | Job folder, `manifest.json`, or a parent folder containing exactly one job. |
 
-Outputs: `tile_job`, `manifest_path`, `saved_count`, `tile_count`, and `status`.
+Outputs: `tile_job`, `manifest_path`, `saved_count`, `tile_count`, `status`, and stored `audio` when available.
 
 ### Video Tile Disk Indexes
 
@@ -245,10 +250,13 @@ Loads saved tiles one by one from disk and merges them.
 | `blend_mode` | Optional: `alpha_over` or `weighted_average`. |
 | `merge_device` | Optional: `cpu` default, `auto`, or `cuda`. |
 | `require_all_tiles` | Optional: default `True`; stop before merging until every expected tile file exists. |
+| `audio_override` | Optional AUDIO for older jobs; takes priority over stored `audio.pt`. |
+
+Outputs: merged `IMAGE` and stored/override `audio`.
 
 ### Video Tile Disk Folder Merge
 
-Standalone final assembly node. It takes a folder/path widget instead of a `TILE_JOB` connection, always requires the complete expected tile set, and can therefore be queued in a separate export workflow. Its `IMAGE` output is the reconstructed frame batch; connect that to your preferred video encoder.
+Standalone final assembly node. It takes a folder/path widget instead of a `TILE_JOB` connection, always requires the complete expected tile set, and can therefore be queued in a separate export workflow. Connect its reconstructed `IMAGE` frame batch and stored/override `audio` outputs to your preferred video encoder.
 
 | Input | Description |
 |---|---|
@@ -257,6 +265,9 @@ Standalone final assembly node. It takes a folder/path widget instead of a `TILE
 | `feather_curve` | Optional seam-alpha curve. |
 | `blend_mode` | Optional: `alpha_over` or `weighted_average`. |
 | `merge_device` | Optional: `cpu` default, `auto`, or `cuda`. |
+| `audio_override` | Optional AUDIO for an older job without `audio.pt`; takes priority when connected. |
+
+Outputs: merged `IMAGE`, status, tile count, and stored/override `audio`.
 
 ### Video Tile Disk Preview
 
