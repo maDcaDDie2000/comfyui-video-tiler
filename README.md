@@ -65,10 +65,13 @@ under **Video Tiler**. Disk-backed nodes appear under **Video Tiler/Disk**.
 | `VideoTileSamplerTimerStart` | Sampler Timer Start |
 | `VideoTileSamplerTimerResult` | Sampler Timing Result |
 | `VideoTileDiskJob` | Video Tile Disk Job |
+| `VideoTileDiskOpenJob` | Video Tile Disk Open Job |
 | `VideoTileDiskIndexes` | Video Tile Disk Indexes |
 | `VideoTileDiskGetTile` | Video Tile Disk Get Tile |
 | `VideoTileDiskSaveTile` | Video Tile Disk Save Tile |
 | `VideoTileDiskMerge` | Video Tile Disk Merge |
+| `VideoTileDiskFolderMerge` | Video Tile Disk Folder Merge |
+| `VideoTileDiskPreview` | Video Tile Disk Preview |
 
 ## Example Workflows
 
@@ -148,14 +151,30 @@ tile_00002.pt
 
 The numbering matches the original tile order in `tile_config`. The manifest records frame size, tile geometry, tile count, and saved tile metadata.
 
-### Pass 2: Stream Merge Saved Tiles
+### Pass 2: Independent Folder Merge and Video Export
 
-1. Connect the same `tile_job` to **Video Tile Disk Merge**.
-2. Set `feather`, `feather_curve`, `blend_mode`, and `merge_device`.
-3. The node checks which tile files are available. With `require_all_tiles=True`, it stops before merging until every expected tile file exists.
-4. Once all tiles are saved, it loads one saved tile at a time and blends it into the final output buffer.
+Pass 2 can live in a completely separate ComfyUI workflow and does not need an active slicer, Disk Job node, source video, or tile-processing branch:
+
+1. Add **Video Tile Disk Folder Merge**.
+2. Paste the completed job folder or its `manifest.json` path into `job_folder`.
+3. Set `feather`, `feather_curve`, `blend_mode`, and `merge_device` to the values you want for the final assembly.
+4. Connect its `IMAGE` output to your video encoder (for example, VideoHelperSuite Video Combine) and configure frame rate/audio there.
+5. Queue this output branch independently. The node rescans the folder on every run. It stops with the saved count and exact missing tile indices until every expected file is present, then streams the tiles into the final frame batch.
+
+If an existing graph still uses a `TILE_JOB` connection, **Video Tile Disk Open Job** can open the folder and provide that connection without rerunning the slicer. The original **Video Tile Disk Merge** remains available for connected graphs.
 
 This avoids loading every processed tile at once. The final merged IMAGE still exists as one tensor, so very long videos can still require a lot of system RAM if `merge_device=cpu` or VRAM if `merge_device=cuda`.
+
+### Review Tiles While Pass 1 Is Running
+
+Use **Video Tile Disk Preview** as a separate review branch or in a small review-only workflow:
+
+1. Point `job_folder` at the same disk job folder.
+2. Choose `tile_index` and `frame_index`. Set `frame_index=-1` to output every frame stored in that tile.
+3. Connect `preview` to ComfyUI's **Preview Image** node.
+4. Leave `missing_tile=nearest_available` to keep reviewing while the requested tile is pending, or choose `error` when you only want the exact tile.
+
+The preview node reports the actual tile/frame shown and the current `saved_count / tile_count`. It rescans the folder each time it runs, so it does not need to be connected to or wait for the active tile branch.
 
 ## Disk Node Details
 
@@ -170,6 +189,16 @@ Creates or updates a disk job manifest from a slicer `tile_config`.
 | `output_folder` | Folder where disk tile job folders are written. The widget shows the default path. |
 
 Outputs: `tile_job`, `manifest_path`, `tile_count`, `status`.
+
+### Video Tile Disk Open Job
+
+Opens a saved job independently from the slicer/processing workflow.
+
+| Input | Description |
+|---|---|
+| `job_folder` | Job folder, `manifest.json`, or a parent folder containing exactly one job. |
+
+Outputs: `tile_job`, `manifest_path`, `saved_count`, `tile_count`, and `status`.
 
 ### Video Tile Disk Indexes
 
@@ -216,6 +245,31 @@ Loads saved tiles one by one from disk and merges them.
 | `blend_mode` | Optional: `alpha_over` or `weighted_average`. |
 | `merge_device` | Optional: `cpu` default, `auto`, or `cuda`. |
 | `require_all_tiles` | Optional: default `True`; stop before merging until every expected tile file exists. |
+
+### Video Tile Disk Folder Merge
+
+Standalone final assembly node. It takes a folder/path widget instead of a `TILE_JOB` connection, always requires the complete expected tile set, and can therefore be queued in a separate export workflow. Its `IMAGE` output is the reconstructed frame batch; connect that to your preferred video encoder.
+
+| Input | Description |
+|---|---|
+| `job_folder` | Job folder, `manifest.json`, or a parent folder containing exactly one job. |
+| `feather` | Same meaning as Video Tile Merge. |
+| `feather_curve` | Optional seam-alpha curve. |
+| `blend_mode` | Optional: `alpha_over` or `weighted_average`. |
+| `merge_device` | Optional: `cpu` default, `auto`, or `cuda`. |
+
+### Video Tile Disk Preview
+
+Loads one saved tile for interactive review, including while the job is incomplete.
+
+| Input | Description |
+|---|---|
+| `job_folder` | Existing job folder or manifest path. |
+| `tile_index` | Tile to inspect. |
+| `frame_index` | Frame to inspect; `-1` returns the complete saved frame batch. |
+| `missing_tile` | Use the nearest available tile or require the exact requested tile. |
+
+Outputs: preview `IMAGE`, actual tile/frame indices, saved/total counts, tile path, and status.
 
 ## Slicer Nodes
 

@@ -11,10 +11,13 @@ from .sampler_timer_node import (
     VideoTileSamplerTimerStart,
 )
 from .disk_nodes import (
+    VideoTileDiskFolderMerge,
     VideoTileDiskGetTile,
     VideoTileDiskIndexes,
     VideoTileDiskJob,
     VideoTileDiskMerge,
+    VideoTileDiskOpenJob,
+    VideoTileDiskPreview,
     VideoTileDiskSaveTile,
 )
 
@@ -32,10 +35,13 @@ NODE_CLASS_MAPPINGS = {
     "VideoTileSamplerTimerStart": VideoTileSamplerTimerStart,
     "VideoTileSamplerTimerResult": VideoTileSamplerTimerResult,
     "VideoTileDiskJob": VideoTileDiskJob,
+    "VideoTileDiskOpenJob": VideoTileDiskOpenJob,
     "VideoTileDiskIndexes": VideoTileDiskIndexes,
     "VideoTileDiskGetTile": VideoTileDiskGetTile,
     "VideoTileDiskSaveTile": VideoTileDiskSaveTile,
     "VideoTileDiskMerge": VideoTileDiskMerge,
+    "VideoTileDiskFolderMerge": VideoTileDiskFolderMerge,
+    "VideoTileDiskPreview": VideoTileDiskPreview,
 }
 NODE_DISPLAY_NAME_MAPPINGS = {
     "VideoTileSlice": "Video Tile Slicer (var. size)",
@@ -49,10 +55,13 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "VideoTileSamplerTimerStart": "Sampler Timer Start",
     "VideoTileSamplerTimerResult": "Sampler Timing Result",
     "VideoTileDiskJob": "Video Tile Disk Job",
+    "VideoTileDiskOpenJob": "Video Tile Disk Open Job",
     "VideoTileDiskIndexes": "Video Tile Disk Indexes",
     "VideoTileDiskGetTile": "Video Tile Disk Get Tile",
     "VideoTileDiskSaveTile": "Video Tile Disk Save Tile",
     "VideoTileDiskMerge": "Video Tile Disk Merge",
+    "VideoTileDiskFolderMerge": "Video Tile Disk Folder Merge",
+    "VideoTileDiskPreview": "Video Tile Disk Preview",
 }
 
 __all__ = ["NODE_CLASS_MAPPINGS", "NODE_DISPLAY_NAME_MAPPINGS"]

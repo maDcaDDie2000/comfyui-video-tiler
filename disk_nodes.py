@@ -119,18 +119,43 @@ def _tile_path(job_dir: Path, tile_index: int) -> Path:
 
 def _save_manifest(path: Path, data: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(data, indent=2, sort_keys=True), encoding="utf-8")
+    temp_path = path.with_suffix(path.suffix + ".tmp")
+    temp_path.write_text(json.dumps(data, indent=2, sort_keys=True), encoding="utf-8")
+    temp_path.replace(path)
+
+
+def _resolve_manifest_path(folder_or_manifest) -> Path:
+    """Resolve a standalone job folder, manifest path, or single-job parent folder."""
+    raw = _scalar_str(folder_or_manifest).strip()
+    candidate = Path(raw).expanduser() if raw else _default_root()
+    if candidate.is_file():
+        return candidate
+    if not candidate.exists():
+        raise FileNotFoundError(f"Tile job folder or manifest not found: {candidate}")
+    if not candidate.is_dir():
+        raise FileNotFoundError(f"Tile job path is not a folder or manifest: {candidate}")
+
+    direct = candidate / "manifest.json"
+    if direct.is_file():
+        return direct
+
+    manifests = sorted(path for path in candidate.glob("*/manifest.json") if path.is_file())
+    if len(manifests) == 1:
+        return manifests[0]
+    if not manifests:
+        raise FileNotFoundError(f"No manifest.json found in tile job folder: {candidate}")
+    raise ValueError(
+        f"Multiple tile jobs found in {candidate}; choose a specific job folder or manifest.json"
+    )
 
 
 def _load_manifest(tile_job) -> tuple[Path, dict[str, Any]]:
-    manifest_path = Path(_scalar_str(tile_job)).expanduser()
-    if manifest_path.is_dir():
-        manifest_path = manifest_path / "manifest.json"
-    if not manifest_path.is_file():
-        raise FileNotFoundError(f"Tile job manifest not found: {manifest_path}")
+    manifest_path = _resolve_manifest_path(tile_job)
     data = json.loads(manifest_path.read_text(encoding="utf-8"))
     if int(data.get("manifest_version", 0)) != _MANIFEST_VERSION:
         raise ValueError(f"Unsupported tile job manifest version: {data.get('manifest_version')}")
+    if "tile_config" not in data or "tile_count" not in data:
+        raise ValueError(f"Invalid tile job manifest (missing tile_config/tile_count): {manifest_path}")
     return manifest_path, data
 
 
@@ -159,7 +184,9 @@ def _sorted_tile_specs(config_tuple: tuple[Any, ...]):
 
 
 def _available_tile_indices(manifest_path: Path, data: dict[str, Any], tile_count: int) -> set[int]:
-    job_dir = Path(data.get("job_dir") or manifest_path.parent)
+    # The folder containing manifest.json is authoritative. This keeps copied or moved
+    # job folders usable even when an older absolute job_dir remains in the manifest.
+    job_dir = manifest_path.parent
     available: set[int] = set()
     for raw_idx, meta in (data.get("saved_tiles") or {}).items():
         try:
@@ -180,6 +207,21 @@ def _format_missing_tiles(missing: list[int]) -> str:
     preview = ", ".join(str(i) for i in missing[:12])
     more = "..." if len(missing) > 12 else ""
     return f"{preview}{more}"
+
+
+def _job_progress(folder_or_manifest) -> tuple[Path, dict[str, Any], list[int], list[int]]:
+    manifest_path, data = _load_manifest(folder_or_manifest)
+    tile_count = int(data["tile_count"])
+    _width, _height, _multiple, tile_specs = parse_tile_config(_manifest_tile_config(data))
+    if tile_count != len(tile_specs):
+        raise ValueError(
+            f"Tile job manifest count mismatch: tile_count={tile_count}, "
+            f"tile_config has {len(tile_specs)} tiles ({manifest_path})"
+        )
+    available = sorted(_available_tile_indices(manifest_path, data, tile_count))
+    available_set = set(available)
+    missing = [i for i in range(tile_count) if i not in available_set]
+    return manifest_path, data, available, missing
 
 
 class VideoTileDiskJob:
@@ -244,6 +286,51 @@ class VideoTileDiskJob:
         status = f"Tile job ready: {tile_count} tiles -> {manifest_path}"
         print(f"[Video Tiler] {status}")
         return (str(manifest_path), str(manifest_path), tile_count, status)
+
+
+class VideoTileDiskOpenJob:
+    """Open an existing disk job without running a slicer or tile-processing branch."""
+
+    DESCRIPTION = (
+        "Opens an existing tile job folder or manifest independently of the tile-generation workflow. "
+        "Use its tile_job output with Disk Merge, Disk Indexes, or other disk nodes."
+    )
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "job_folder": (
+                    "STRING",
+                    {
+                        "default": _default_root_string(),
+                        "tooltip": "Job folder, manifest.json, or a parent folder containing exactly one tile job.",
+                    },
+                ),
+            },
+        }
+
+    RETURN_TYPES = ("TILE_JOB", "STRING", "INT", "INT", "STRING")
+    RETURN_NAMES = ("tile_job", "manifest_path", "saved_count", "tile_count", "status")
+    FUNCTION = "open_job"
+    CATEGORY = "Video Tiler/Disk"
+
+    @classmethod
+    def IS_CHANGED(cls, **_kwargs):
+        return float("nan")
+
+    def open_job(self, job_folder: str):
+        manifest_path, data, available, missing = _job_progress(job_folder)
+        tile_count = int(data["tile_count"])
+        if missing:
+            status = (
+                f"Tile job incomplete: {len(available)}/{tile_count} saved; "
+                f"missing {_format_missing_tiles(missing)}"
+            )
+        else:
+            status = f"Tile job complete: {tile_count}/{tile_count} saved"
+        print(f"[Video Tiler] {status}: {manifest_path}")
+        return (str(manifest_path), str(manifest_path), len(available), tile_count, status)
 
 
 class VideoTileDiskIndexes:
@@ -339,7 +426,7 @@ class VideoTileDiskSaveTile:
         manifest_path, data = _load_manifest(tile_job)
         tile_count = int(data["tile_count"])
         ti = max(0, min(_scalar_int(tile_index), tile_count - 1))
-        job_dir = Path(data.get("job_dir") or manifest_path.parent)
+        job_dir = manifest_path.parent
         path = _tile_path(job_dir, ti)
         if path.exists() and not _scalar_bool(overwrite, True):
             raise FileExistsError(f"Tile already exists and overwrite is off: {path}")
@@ -354,7 +441,9 @@ class VideoTileDiskSaveTile:
             "saved_at": time.strftime("%Y-%m-%d %H:%M:%S"),
         }
         path.parent.mkdir(parents=True, exist_ok=True)
-        torch.save(payload, path)
+        temp_path = path.with_suffix(path.suffix + ".tmp")
+        torch.save(payload, temp_path)
+        temp_path.replace(path)
         saved_tiles = data.setdefault("saved_tiles", {})
         saved_tiles[str(ti)] = {"path": path.name, "shape": payload["shape"], "dtype": payload["dtype"]}
         _save_manifest(manifest_path, data)
@@ -416,7 +505,9 @@ class VideoTileDiskMerge:
         dev_mode = _device_mode_keyword(merge_device)
         frac = _strip_fraction(_scalar_float(feather))
         sorted_pairs = _sorted_tile_specs(config_tuple)
-        first_idx, _first_spec = sorted_pairs[0]
+        if not available:
+            raise RuntimeError(f"Disk merge found no saved tiles in: {manifest_path.parent}")
+        first_idx, _first_spec = next(pair for pair in sorted_pairs if pair[0] in available)
         first_tile = _load_saved_tile(_tile_path(manifest_path.parent, first_idx))
         if len(first_tile.shape) < 4:
             raise ValueError(f"Tile shape {first_tile.shape} - expected (B,H,W,C)")
@@ -438,6 +529,8 @@ class VideoTileDiskMerge:
             num = torch.zeros((B, height, width, C), dtype=torch.float32, device=device)
             den = torch.zeros((B, height, width), dtype=torch.float32, device=device)
             for paint_i, (orig_idx, spec) in enumerate(sorted_pairs):
+                if orig_idx not in available:
+                    continue
                 tile = _load_saved_tile(_tile_path(manifest_path.parent, orig_idx))
                 x, y, w, h = spec.x, spec.y, spec.w, spec.h
                 if ver in (3, 5):
@@ -453,12 +546,14 @@ class VideoTileDiskMerge:
                 _weighted_accum_region(num, den, tile, y, x, h, w, wmask)
                 del tile
             out = num / den.unsqueeze(-1).clamp(min=1e-8)
-            print(f"[Video Tiler] Disk merge complete: {len(sorted_pairs)} tiles -> IMAGE ({mode}, device={device})")
+            print(f"[Video Tiler] Disk merge complete: {len(available)} tiles -> IMAGE ({mode}, device={device})")
             return (out.to(dtype=dtype),)
 
         output = torch.zeros((B, height, width, C), dtype=dtype, device=device)
         covered = torch.zeros((B, height, width), dtype=torch.bool, device=device)
         for paint_i, (orig_idx, spec) in enumerate(sorted_pairs):
+            if orig_idx not in available:
+                continue
             tile = _load_saved_tile(_tile_path(manifest_path.parent, orig_idx)).to(device)
             x, y, w, h = spec.x, spec.y, spec.w, spec.h
             if ver in (3, 5):
@@ -475,5 +570,164 @@ class VideoTileDiskMerge:
                 alpha = _feather_mask(w, h, frac, x, y, width, height).to(device=device)
                 _blend_tile_with_coverage(output, covered, tile, y, x, h, w, alpha, feather_curve=curve)
             del tile
-        print(f"[Video Tiler] Disk merge complete: {len(sorted_pairs)} tiles -> IMAGE ({mode}, device={device})")
+        print(f"[Video Tiler] Disk merge complete: {len(available)} tiles -> IMAGE ({mode}, device={device})")
         return (output,)
+
+
+class VideoTileDiskFolderMerge:
+    """Standalone folder-driven merge for a separate final-export workflow."""
+
+    DESCRIPTION = (
+        "Independently scans an existing disk tile job folder and merges it only when every expected "
+        "tile is available. Connect IMAGE to your video encoder; no active slicer or tile run is required."
+    )
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "job_folder": (
+                    "STRING",
+                    {
+                        "default": _default_root_string(),
+                        "tooltip": "Job folder, manifest.json, or a parent folder containing exactly one tile job.",
+                    },
+                ),
+                "feather": (
+                    "FLOAT",
+                    {"default": 0.125, "min": 0.0, "max": 0.5, "step": 0.005},
+                ),
+            },
+            "optional": {
+                "feather_curve": (["linear", "ease_in", "ease_out", "ease_in_out"], {"default": "linear"}),
+                "blend_mode": (["alpha_over", "weighted_average"], {"default": "alpha_over"}),
+                "merge_device": (["auto", "cpu", "cuda"], {"default": "cpu"}),
+            },
+        }
+
+    RETURN_TYPES = ("IMAGE", "STRING", "INT")
+    RETURN_NAMES = ("IMAGE", "status", "tile_count")
+    FUNCTION = "merge_folder"
+    CATEGORY = "Video Tiler/Disk"
+
+    @classmethod
+    def IS_CHANGED(cls, **_kwargs):
+        # Folder contents can change while the workflow graph and widgets stay unchanged.
+        return float("nan")
+
+    def merge_folder(self, job_folder, feather, feather_curve=None, blend_mode=None, merge_device=None):
+        manifest_path, data, available, missing = _job_progress(job_folder)
+        tile_count = int(data["tile_count"])
+        if missing:
+            raise RuntimeError(
+                f"Standalone disk merge waiting for tiles: saved {len(available)}/{tile_count}; "
+                f"missing {_format_missing_tiles(missing)}; folder {manifest_path.parent}"
+            )
+        image = VideoTileDiskMerge().merge(
+            str(manifest_path),
+            feather,
+            feather_curve=feather_curve,
+            blend_mode=blend_mode,
+            merge_device=merge_device,
+            require_all_tiles=True,
+        )[0]
+        status = f"Standalone disk merge complete: {tile_count}/{tile_count} tiles from {manifest_path.parent}"
+        return (image, status, tile_count)
+
+
+class VideoTileDiskPreview:
+    """Interactively inspect saved tiles from an incomplete or complete disk job."""
+
+    DESCRIPTION = (
+        "Loads one already-saved tile (and optionally one frame) from a disk job folder for review. "
+        "Works while other tiles are still being generated and does not require an active tile run."
+    )
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "job_folder": (
+                    "STRING",
+                    {
+                        "default": _default_root_string(),
+                        "tooltip": "Job folder, manifest.json, or a parent folder containing exactly one tile job.",
+                    },
+                ),
+                "tile_index": ("INT", {"default": 0, "min": 0, "max": 999999}),
+                "frame_index": (
+                    "INT",
+                    {
+                        "default": 0,
+                        "min": -1,
+                        "max": 999999,
+                        "tooltip": "Frame to preview. Use -1 to output the tile's complete frame batch.",
+                    },
+                ),
+                "missing_tile": (
+                    ["nearest_available", "error"],
+                    {
+                        "default": "nearest_available",
+                        "tooltip": (
+                            "Use the closest saved tile while the requested tile is still pending, "
+                            "or stop with an error."
+                        ),
+                    },
+                ),
+            },
+        }
+
+    RETURN_TYPES = ("IMAGE", "INT", "INT", "INT", "INT", "STRING", "STRING")
+    RETURN_NAMES = (
+        "preview",
+        "actual_tile_index",
+        "actual_frame_index",
+        "saved_count",
+        "tile_count",
+        "tile_path",
+        "status",
+    )
+    FUNCTION = "preview"
+    CATEGORY = "Video Tiler/Disk"
+
+    @classmethod
+    def IS_CHANGED(cls, **_kwargs):
+        return float("nan")
+
+    def preview(self, job_folder, tile_index=0, frame_index=0, missing_tile="nearest_available"):
+        manifest_path, data, available, missing = _job_progress(job_folder)
+        tile_count = int(data["tile_count"])
+        if not available:
+            raise RuntimeError(f"Tile preview found no saved tiles yet in: {manifest_path.parent}")
+
+        requested = max(0, min(_scalar_int(tile_index), tile_count - 1))
+        actual = requested
+        used_fallback = False
+        if actual not in available:
+            if _scalar_str(missing_tile) == "error":
+                raise RuntimeError(
+                    f"Tile {actual} is not available yet; saved {len(available)}/{tile_count}; "
+                    f"missing {_format_missing_tiles(missing)}"
+                )
+            actual = min(available, key=lambda idx: (abs(idx - requested), idx))
+            used_fallback = True
+
+        path = _tile_path(manifest_path.parent, actual)
+        tile = _load_saved_tile(path)
+        if tile.ndim != 4:
+            raise ValueError(f"Saved tile shape {tuple(tile.shape)} - expected (B,H,W,C): {path}")
+        requested_frame = _scalar_int(frame_index)
+        if requested_frame < 0:
+            preview = tile
+            actual_frame = -1
+        else:
+            actual_frame = max(0, min(requested_frame, tile.shape[0] - 1))
+            preview = tile[actual_frame : actual_frame + 1]
+
+        fallback = f" (requested {requested}, nearest saved tile used)" if used_fallback else ""
+        status = (
+            f"Preview tile {actual}/{tile_count - 1}{fallback}; frame "
+            f"{'all' if actual_frame < 0 else actual_frame}; saved {len(available)}/{tile_count}"
+        )
+        print(f"[Video Tiler] {status}: {path}")
+        return (preview, actual, actual_frame, len(available), tile_count, str(path), status)
